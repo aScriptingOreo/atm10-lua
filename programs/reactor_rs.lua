@@ -7,6 +7,10 @@
 local cfg = dofile("/lib/cn.lua")
 local PELLET = cfg.Pellet or "oritech:uranium_pellet"
 local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
+-- AP 0.8 target: "@<direction>" = side of the bridge, anything else = peripheral name on the network
+local TARGET = EXPORT_DIR:match("^@") and EXPORT_DIR
+  or (({ up = 1, down = 1, north = 1, south = 1, east = 1, west = 1, front = 1, back = 1, left = 1, right = 1, top = 1, bottom = 1 })[EXPORT_DIR] and "@" .. EXPORT_DIR)
+  or EXPORT_DIR
 local STOCK = 64         -- craft when RS holds fewer than this
 local BATCH = 64         -- pellets per craft / export call
 local COOLDOWN = 60      -- seconds between craft requests (isCrafting alone let them pile up)
@@ -36,8 +40,8 @@ local function tick()
     nextCraft = os.clock() + COOLDOWN
   end
   if have > 0 then
-    -- AP 0.8: exportItem(target, filter); target = side or peripheral name. Returns count or nil, err
-    local n, err = bridge.exportItem(EXPORT_DIR, { name = PELLET, count = BATCH })
+    -- AP 0.8: exportItem(target, filter). Returns count or nil, err
+    local n, err = bridge.exportItem(TARGET, { name = PELLET, count = BATCH })
     print("exported " .. tostring(n) .. (err and (" (" .. tostring(err) .. ")") or ""))
   end
 end
