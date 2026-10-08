@@ -1,10 +1,11 @@
 -- Computer B: next to an RS Bridge. While the gate is open, keep pellets stocked and push them out.
-local PELLET = "oritech:uranium_pellet"
-local EXPORT_DIR = "down" -- bridge side facing the reactor fuel port
+local cfg = dofile("/lib/cn.lua")
+local PELLET = cfg.Pellet or "oritech:uranium_pellet"
+local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
 local STOCK = 64         -- craft when RS holds fewer than this
 local BATCH = 64         -- pellets per craft / export call
 local TIMEOUT = 30       -- no sensor message this long -> gate closed
-local PROTO = "reactor"
+local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))
 
 local bridge = peripheral.find("rs_bridge") or error("no rs_bridge", 0)
 rednet.open(peripheral.getName(peripheral.find("modem")))

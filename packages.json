@@ -3,6 +3,10 @@
     "desc": "this package manager (self-updates)",
     "files": ["cookienet.lua"]
   },
+  "cn_lib": {
+    "desc": "shared config helper (auto-installed as a dependency)",
+    "files": ["lib/cn.lua"]
+  },
   "hello": {
     "desc": "test program",
     "files": ["programs/hello.lua"],
@@ -10,11 +14,22 @@
   },
   "reactor_sensor": {
     "desc": "Oritech reactor redstone port -> rednet gate broadcast",
+    "deps": ["cn_lib"],
+    "config": [
+      {"key": "ReactorName", "prompt": "Reactor name (same on sensor + RS computer)"},
+      {"key": "InSide", "prompt": "Side touching redstone port comparator", "default": "back"}
+    ],
     "files": ["programs/reactor_sensor.lua"],
     "main": "programs/reactor_sensor.lua"
   },
   "reactor_rs": {
     "desc": "RS Bridge pellet feeder, listens for reactor_sensor",
+    "deps": ["cn_lib"],
+    "config": [
+      {"key": "ReactorName", "prompt": "Reactor name (same on sensor + RS computer)"},
+      {"key": "ExportDir", "prompt": "Bridge side facing the fuel port", "default": "down"},
+      {"key": "Pellet", "prompt": "Pellet item id", "default": "oritech:uranium_pellet"}
+    ],
     "files": ["programs/reactor_rs.lua"],
     "main": "programs/reactor_rs.lua"
   }

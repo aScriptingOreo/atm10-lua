@@ -1,6 +1,7 @@
 -- Computer A: next to the reactor redstone port (Energy mode). Broadcasts gate state over rednet.
-local IN_SIDE = "back" -- side touching the port's comparator output
-local PROTO = "reactor"
+local cfg = dofile("/lib/cn.lua")
+local IN_SIDE = cfg.InSide or "back" -- side touching the port's comparator output
+local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))
 local HEARTBEAT = 10   -- seconds; receiver fails closed if it hears nothing for longer
 
 rednet.open(peripheral.getName(peripheral.find("modem")))
