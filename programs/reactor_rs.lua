@@ -27,10 +27,11 @@ local function tick()
   if os.clock() - last > TIMEOUT then setOpen(false) end
   if not open then return end
   local item = { name = PELLET }
-  local have = (bridge.getItem(item) or {}).amount or 0
+  local info = bridge.getItem(item) or {}
+  local have = info.count or 0 -- AP 0.8 field is `count`
   if have < STOCK and os.clock() >= nextCraft then
     local busy = bridge.isCrafting(item)
-    print("crafting " .. BATCH .. " (isCrafting=" .. tostring(busy) .. ")")
+    print("have " .. have .. ", crafting " .. BATCH .. " (isCrafting=" .. tostring(busy) .. ")")
     if not busy then bridge.craftItem({ name = PELLET, count = BATCH }) end
     nextCraft = os.clock() + COOLDOWN
   end
