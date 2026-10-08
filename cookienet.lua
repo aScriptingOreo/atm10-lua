@@ -1,5 +1,6 @@
 -- cookienet: tiny package manager. Registry = packages.json in the GitHub repo.
 -- @desc this package manager (self-updates)
+-- @files startup/cn.lua
 local BASE = "https://raw.githubusercontent.com/aScriptingOreo/atm10-lua/main/"
 local STATE = "/.cookienet/installed.json" -- { pkgs = { name = {files, main} }, boot = name, config = { K = V } }
 local USAGE = [[cookienet <cmd>
@@ -79,7 +80,8 @@ local function setBoot(name, st)
   local p = st.pkgs[name]
   if not (p and p.main) then error(name .. " not installed or has no main", 0) end
   -- update first (failure is non-fatal: shell.run just returns false), then run the program
-  write("/startup.lua", 'shell.run("/cookienet.lua", "update")\nshell.run("/' .. p.main .. '")\n')
+  write("/startup.lua", 'shell.setAlias("cn", "cookienet")
+shell.run("/cookienet.lua", "update")\nshell.run("/' .. p.main .. '")\n')
   st.boot = name
   print("boot: " .. name)
 end
