@@ -4,6 +4,8 @@
 -- @config ReactorName|Reactor name (same on sensor + RS computer)
 -- @config ExportDir|Bridge side facing the fuel port|down
 -- @config Pellet|Pellet item id|oritech:uranium_pellet
+-- @config Batch|Pellets per export / craft|8
+-- @config Stock|Craft when RS holds fewer than|64
 local cfg = dofile("/lib/cn.lua")
 local PELLET = cfg.Pellet or "oritech:uranium_pellet"
 local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
@@ -11,8 +13,8 @@ local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fue
 local TARGET = EXPORT_DIR:match("^@") and EXPORT_DIR
   or (({ up = 1, down = 1, north = 1, south = 1, east = 1, west = 1, front = 1, back = 1, left = 1, right = 1, top = 1, bottom = 1 })[EXPORT_DIR] and "@" .. EXPORT_DIR)
   or EXPORT_DIR
-local STOCK = 64         -- craft when RS holds fewer than this
-local BATCH = 64         -- pellets per craft / export call
+local STOCK = tonumber(cfg.Stock) or 64 -- craft when RS holds fewer than this
+local BATCH = tonumber(cfg.Batch) or 8  -- pellets per craft / export call
 local COOLDOWN = 60      -- seconds between craft requests (isCrafting alone let them pile up)
 local TIMEOUT = 30       -- no sensor message this long -> gate closed
 local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))

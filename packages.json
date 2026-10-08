@@ -31,6 +31,16 @@
         "key": "Pellet",
         "prompt": "Pellet item id",
         "default": "oritech:uranium_pellet"
+      },
+      {
+        "key": "Batch",
+        "prompt": "Pellets per export / craft",
+        "default": "8"
+      },
+      {
+        "key": "Stock",
+        "prompt": "Craft when RS holds fewer than",
+        "default": "64"
       }
     ],
     "files": [
