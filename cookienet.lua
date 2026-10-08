@@ -80,8 +80,7 @@ local function setBoot(name, st)
   local p = st.pkgs[name]
   if not (p and p.main) then error(name .. " not installed or has no main", 0) end
   -- update first (failure is non-fatal: shell.run just returns false), then run the program
-  write("/startup.lua", 'shell.setAlias("cn", "cookienet")
-shell.run("/cookienet.lua", "update")\nshell.run("/' .. p.main .. '")\n')
+  write("/startup.lua", 'shell.setAlias("cn", "cookienet")\nshell.run("/cookienet.lua", "update")\nshell.run("/' .. p.main .. '")\n')
   st.boot = name
   print("boot: " .. name)
 end
