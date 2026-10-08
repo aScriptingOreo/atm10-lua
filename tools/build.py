@@ -4,6 +4,7 @@ Header lines (first 20 lines of a file):
   -- @name <pkg>                      default: file name without .lua
   -- @desc <text>
   -- @deps <pkg> [<pkg>...]
+  -- @files <path> [<path>...]       extra files shipped with the package
   -- @config <Key>|<prompt>[|<default>]   repeatable
 Files under programs/ get `main` set (run on boot).
 """
@@ -25,6 +26,7 @@ for f in files:
         if tag == "name": name = val
         elif tag == "desc": p["desc"] = val
         elif tag == "deps": p["deps"] = val.split()
+        elif tag == "files": p["files"] += val.split()  # extra files shipped with this package
         elif tag == "config":
             k, prompt, *d = val.split("|")
             p.setdefault("config", []).append({"key": k, "prompt": prompt, **({"default": d[0]} if d else {})})
