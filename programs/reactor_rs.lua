@@ -9,6 +9,7 @@ local PELLET = cfg.Pellet or "oritech:uranium_pellet"
 local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
 local STOCK = 64         -- craft when RS holds fewer than this
 local BATCH = 64         -- pellets per craft / export call
+local COOLDOWN = 60      -- seconds between craft requests (isCrafting alone let them pile up)
 local TIMEOUT = 30       -- no sensor message this long -> gate closed
 local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))
 
@@ -16,7 +17,7 @@ local bridge = peripheral.find("rs_bridge") or error("no rs_bridge", 0)
 rednet.open(peripheral.getName(peripheral.find("modem")))
 
 print("listening on " .. PROTO)
-local open, last = false, 0
+local open, last, nextCraft = false, 0, 0
 local function setOpen(v)
   if v ~= open then print("gate " .. (v and "open" or "closed")) end
   open = v
@@ -27,9 +28,11 @@ local function tick()
   if not open then return end
   local item = { name = PELLET }
   local have = (bridge.getItem(item) or {}).amount or 0
-  if have < STOCK and not bridge.isCrafting(item) then
-    print("crafting " .. BATCH)
-    bridge.craftItem({ name = PELLET, count = BATCH })
+  if have < STOCK and os.clock() >= nextCraft then
+    local busy = bridge.isCrafting(item)
+    print("crafting " .. BATCH .. " (isCrafting=" .. tostring(busy) .. ")")
+    if not busy then bridge.craftItem({ name = PELLET, count = BATCH }) end
+    nextCraft = os.clock() + COOLDOWN
   end
   if have > 0 then
     print("exported " .. tostring(bridge.exportItem({ name = PELLET, count = BATCH }, EXPORT_DIR)))
