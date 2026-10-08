@@ -15,25 +15,36 @@ local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorN
 local bridge = peripheral.find("rs_bridge") or error("no rs_bridge", 0)
 rednet.open(peripheral.getName(peripheral.find("modem")))
 
+print("listening on " .. PROTO)
 local open, last = false, 0
+local function setOpen(v)
+  if v ~= open then print("gate " .. (v and "open" or "closed")) end
+  open = v
+end
+
 local function tick()
-  if os.clock() - last > TIMEOUT then open = false end
+  if os.clock() - last > TIMEOUT then setOpen(false) end
   if not open then return end
   local item = { name = PELLET }
   local have = (bridge.getItem(item) or {}).amount or 0
   if have < STOCK and not bridge.isItemCrafting(item) then
+    print("crafting " .. BATCH)
     bridge.craftItem({ name = PELLET, count = BATCH })
   end
-  if have > 0 then bridge.exportItem({ name = PELLET, count = BATCH }, EXPORT_DIR) end
+  if have > 0 then
+    print("exported " .. tostring(bridge.exportItem({ name = PELLET, count = BATCH }, EXPORT_DIR)))
+  end
 end
 
 local t = os.startTimer(5)
 while true do
   local e, a, b, c = os.pullEvent()
   if e == "rednet_message" and c == PROTO and type(b) == "table" then
-    open, last = b.open, os.clock()
+    last = os.clock()
+    setOpen(b.open)
   elseif e == "timer" and a == t then
-    tick()
+    local ok, err = pcall(tick) -- bridge errors (bad item id, RS offline) shouldn't kill the loop
+    if not ok then print("error: " .. tostring(err)) end
     t = os.startTimer(5)
   end
 end
