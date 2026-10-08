@@ -1,4 +1,5 @@
 -- cookienet: tiny package manager. Registry = packages.json in the GitHub repo.
+-- @desc this package manager (self-updates)
 local BASE = "https://raw.githubusercontent.com/aScriptingOreo/atm10-lua/main/"
 local STATE = "/.cookienet/installed.json" -- { pkgs = { name = {files, main} }, boot = name, config = { K = V } }
 local USAGE = [[cookienet <cmd>

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Keep packages.json in sync with the scripts. Enable once: git config core.hooksPath tools/hooks
+python tools/build.py && git add packages.json

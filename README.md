@@ -33,7 +33,15 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 ## Adding a package
 
 1. Put files in the repo (programs under `programs/`).
-2. Add an entry to `packages.json`: `files` (what to download), `main` (what to run on boot), optional `deps`
-   (other packages) and `config` (`key`/`prompt`/`default` asked on `get`). Programs read config with
-   `local cfg = dofile("/lib/cn.lua")` (depend on `cn_lib`).
+2. Put `-- @desc` (and `@deps`, `@config`) header lines at the top; `git commit` regenerates `packages.json`.
+   Programs read config with `local cfg = dofile("/lib/cn.lua")` (add `-- @deps cn_lib`).
 3. Push. Machines get it on next `cookienet update`.
+
+## Registry is generated
+
+`packages.json` is built from `-- @` header comments in each script (`@name`, `@desc`, `@deps`, `@config Key|prompt|default`)
+by `tools/build.py`. Don't edit it by hand. Enable the commit hook once per clone so it stays current:
+
+```
+git config core.hooksPath tools/hooks
+```

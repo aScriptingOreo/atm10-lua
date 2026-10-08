@@ -1,4 +1,8 @@
 -- Computer A: next to the reactor redstone port (Energy mode). Broadcasts gate state over rednet.
+-- @desc Oritech reactor redstone port -> rednet gate broadcast
+-- @deps cn_lib
+-- @config ReactorName|Reactor name (same on sensor + RS computer)
+-- @config InSide|Side touching redstone port comparator|back
 local cfg = dofile("/lib/cn.lua")
 local IN_SIDE = cfg.InSide or "back" -- side touching the port's comparator output
 local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))

@@ -1,4 +1,9 @@
 -- Computer B: next to an RS Bridge. While the gate is open, keep pellets stocked and push them out.
+-- @desc RS Bridge pellet feeder, listens for reactor_sensor
+-- @deps cn_lib
+-- @config ReactorName|Reactor name (same on sensor + RS computer)
+-- @config ExportDir|Bridge side facing the fuel port|down
+-- @config Pellet|Pellet item id|oritech:uranium_pellet
 local cfg = dofile("/lib/cn.lua")
 local PELLET = cfg.Pellet or "oritech:uranium_pellet"
 local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
