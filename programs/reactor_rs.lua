@@ -36,7 +36,9 @@ local function tick()
     nextCraft = os.clock() + COOLDOWN
   end
   if have > 0 then
-    print("exported " .. tostring(bridge.exportItem({ name = PELLET, count = BATCH }, EXPORT_DIR)))
+    -- AP 0.8: exportItem(target, filter); target = side or peripheral name. Returns count or nil, err
+    local n, err = bridge.exportItem(EXPORT_DIR, { name = PELLET, count = BATCH })
+    print("exported " .. tostring(n) .. (err and (" (" .. tostring(err) .. ")") or ""))
   end
 end
 
