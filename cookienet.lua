@@ -11,9 +11,21 @@ local USAGE = [[cookienet <cmd>
   update [pkg...]   re-pull installed (all if none)
   boot <pkg|off>    set/clear startup program]]
 
+local API = "https://api.github.com/repos/aScriptingOreo/atm10-lua/commits/main"
+local ref -- commit sha, resolved once per run
+
+-- raw.githubusercontent caches /main/ for minutes; /<sha>/ URLs are immutable so never stale
+local function base()
+  if not ref then
+    local r = http.get(API, { Accept = "application/vnd.github.sha" })
+    ref = r and r.readAll():match("^%x+") or "main" -- API down / rate-limited: fall back to branch
+    if r then r.close() end
+  end
+  return BASE:gsub("/main/$", "/" .. ref .. "/")
+end
+
 local function fetch(path)
-  -- ?t= dodges stale CDN cache
-  local r, err = http.get(BASE .. path .. "?t=" .. os.epoch("utc"))
+  local r, err = http.get(base() .. path .. "?t=" .. os.epoch("utc"))
   if not r then error("fetch " .. path .. ": " .. tostring(err), 0) end
   local s = r.readAll()
   r.close()
