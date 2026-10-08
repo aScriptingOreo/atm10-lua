@@ -27,7 +27,7 @@ local function tick()
   if not open then return end
   local item = { name = PELLET }
   local have = (bridge.getItem(item) or {}).amount or 0
-  if have < STOCK and not bridge.isItemCrafting(item) then
+  if have < STOCK and not bridge.isCrafting(item) then
     print("crafting " .. BATCH)
     bridge.craftItem({ name = PELLET, count = BATCH })
   end
