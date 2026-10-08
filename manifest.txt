@@ -1,2 +1,4 @@
 update.lua
 programs/hello.lua
+programs/reactor_sensor.lua
+programs/reactor_rs.lua

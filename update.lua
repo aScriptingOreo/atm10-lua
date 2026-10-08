@@ -20,3 +20,11 @@ for _, p in ipairs(paths) do
   f.close()
 end
 print("updated " .. #paths .. " files")
+
+-- `update <program>`: make this computer auto-update then run programs/<program>.lua on boot
+if arg and arg[1] then
+  local f = fs.open("startup.lua", "w")
+  f.write('shell.run("update")\nshell.run("programs/' .. arg[1] .. '.lua")\n')
+  f.close()
+  print("startup set: " .. arg[1])
+end
