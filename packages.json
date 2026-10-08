@@ -1,0 +1,21 @@
+{
+  "cookienet": {
+    "desc": "this package manager (self-updates)",
+    "files": ["cookienet.lua"]
+  },
+  "hello": {
+    "desc": "test program",
+    "files": ["programs/hello.lua"],
+    "main": "programs/hello.lua"
+  },
+  "reactor_sensor": {
+    "desc": "Oritech reactor redstone port -> rednet gate broadcast",
+    "files": ["programs/reactor_sensor.lua"],
+    "main": "programs/reactor_sensor.lua"
+  },
+  "reactor_rs": {
+    "desc": "RS Bridge pellet feeder, listens for reactor_sensor",
+    "files": ["programs/reactor_rs.lua"],
+    "main": "programs/reactor_rs.lua"
+  }
+}
