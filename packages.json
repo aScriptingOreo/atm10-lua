@@ -11,13 +11,6 @@
       "cookienet.lua"
     ]
   },
-  "hello": {
-    "desc": "test program",
-    "files": [
-      "programs/hello.lua"
-    ],
-    "main": "programs/hello.lua"
-  },
   "reactor_rs": {
     "desc": "RS Bridge pellet feeder, listens for reactor_sensor",
     "deps": [

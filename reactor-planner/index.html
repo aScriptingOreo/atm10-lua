@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oritech Reactor Planner</title>
+<style>
+  :root {
+    --bg: #f4f4f1; --panel: #fff; --ink: #1d1d1b; --mute: #6b6b66; --line: #d8d8d2;
+    --ok: #2e7d32; --bad: #c62828; --accent: #2f5fd0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151515; --panel: #1f1f1f; --ink: #ececea; --mute: #9a9a95; --line: #333; --ok: #66bb6a; --bad: #ef5350; --accent: #7ea2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: 280px 1fr 300px; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 16px 16px 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--mute); margin: 0 0 8px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0; }
+  input[type=number], select { width: 90px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  button.alt { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .palette button { display: flex; align-items: center; gap: 6px; background: transparent; color: var(--ink); border: 1px solid var(--line); width: 100%; margin: 3px 0; }
+  .palette button.sel { outline: 2px solid var(--accent); }
+  .palette input { margin-left: auto; }
+  .sw { width: 18px; height: 18px; border-radius: 3px; display: inline-grid; place-items: center; font-weight: 700; font-size: 11px; color: #fff; }
+  #grid { display: grid; gap: 3px; width: max-content; margin: 0 auto; user-select: none; }
+  .cell { width: 54px; height: 54px; border-radius: 5px; border: 3px solid var(--line); display: grid; place-items: center; cursor: crosshair; position: relative; font-size: 11px; }
+  .cell b { font-size: 15px; }
+  .cell small { position: absolute; bottom: 2px; font-size: 10px; }
+  .cell i { position: absolute; top: 2px; right: 4px; font-style: normal; font-size: 9px; opacity: .8; }
+  .stat { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+  .stat span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #ceiling { display: grid; gap: 2px; width: max-content; font: 11px monospace; }
+  #ceiling div { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; background: var(--line); }
+  textarea { width: 100%; height: 120px; font: 13px monospace; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; }
+  .hint { color: var(--mute); font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Oritech Reactor Planner <span class="hint">· ATM10 / Oritech 1.x, MC 1.21.1</span></h1>
+<main>
+  <div>
+    <section>
+      <h2>Size (interior)</h2>
+      <label>Preset <select id="preset" style="width:170px"><option value="">—</option></select></label>
+      <label>Width (x) <input id="w" type="number" min="1" max="30" value="5"></label>
+      <label>Depth (z) <input id="d" type="number" min="1" max="30" value="5"></label>
+      <label>Height (layers) <input id="h" type="number" min="1" max="62" value="3"></label>
+      <p class="hint">Heat is per column and ignores height. RF, fuel and coolant scale with height, so build tall.</p>
+    </section>
+    <section>
+      <h2>Palette</h2>
+      <div class="palette" id="palette"></div>
+      <p class="hint">Left-click paints, right-click erases. Checkbox = optimizer may use it.</p>
+    </section>
+    <section>
+      <h2>Optimizer</h2>
+      <label>Objective <select id="obj"><option value="rf">Max RF/t</option><option value="eff">Max RF per fuel</option></select></label>
+      <label>Iterations <input id="iters" type="number" min="500" step="1000" value="20000"></label>
+      <div class="row"><button id="opt">Optimize</button><button class="alt" id="clear">Clear grid</button></div>
+      <p class="hint" id="optStatus">Starts from current grid. Stop any time; best so far stays.</p>
+    </section>
+    <section>
+      <h2>Config (server values)</h2>
+      <label>RF per pulse <input id="rfPerPulse" type="number" value="64"></label>
+      <label>Absorber rate <input id="absorberRate" type="number" value="16"></label>
+      <label>Vent base <input id="ventBaseRate" type="number" value="4"></label>
+      <label>Vent relative <input id="ventRelativeRate" type="number" value="100"></label>
+      <label>Max heat <input id="maxHeat" type="number" value="2000"></label>
+      <label>Heat limit (design) <input id="limit" type="number" value="1600"></label>
+      <p class="hint">Limit 1600 = default warning siren (80%). Meltdown = above max heat for 600 ticks.</p>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Layer plan <span class="hint">(every layer identical, top-down view, x →, z ↓)</span></h2>
+      <div id="grid"></div>
+      <div class="row" style="justify-content:center">
+        <button id="play">▶ Live sim</button>
+        <button class="alt" id="reset">Reset heat</button>
+        <select id="speed"><option value="1">1×</option><option value="10" selected>10×</option><option value="100">100×</option></select>
+        <span class="hint" id="tick"></span>
+      </div>
+      <p class="hint" style="text-align:center">Cell number = heat (steady state, or live while running). Corner = pulses for rods.</p>
+    </section>
+    <section>
+      <h2>Layout text <span class="hint">(copy / paste to share)</span></h2>
+      <textarea id="txt" spellcheck="false"></textarea>
+      <div class="row"><button class="alt" id="load">Load from text</button></div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Result</h2>
+      <div id="stats"></div>
+    </section>
+    <section>
+      <h2>Fuel</h2>
+      <label>Fuel item <select id="fuelItem" style="width:150px">
+        <option value="400">Small uranium pellet</option>
+        <option value="4000" selected>Uranium pellet</option>
+        <option value="4000">Small plutonium pellet</option>
+        <option value="40000">Plutonium pellet</option>
+      </select></label>
+      <div id="fuelStats"></div>
+    </section>
+    <section>
+      <h2>Ceiling (top wall layer)</h2>
+      <div id="ceiling"></div>
+      <p class="hint">F = fuel port above each rod column, A = absorber port above each absorber column, W = reactor wall.</p>
+    </section>
+    <section>
+      <h2>Bill of materials</h2>
+      <div id="bom"></div>
+    </section>
+  </div>
+</main>
+
+<script src="sim.js"></script>
+<script>
+const S = ReactorSim;
+const META = {
+  '.': ['Empty', 'transparent'],
+  '1': ['Fuel rod', '#43a047'],
+  '2': ['Double fuel rod', '#2e7d32'],
+  '4': ['Quad fuel rod', '#1b5e20'],
+  'R': ['Neutron reflector', '#8e24aa'],
+  'P': ['Heat pipe', '#ef6c00'],
+  'V': ['Heat vent', '#1e88e5'],
+  'A': ['Absorber (condenser)', '#00acc1'],
+};
+const $ = id => document.getElementById(id);
+let grid = Array.from({ length: 5 }, () => Array(5).fill('.'));
+let brush = '1', evalRes = null, live = null, painting = null;
+
+// palette
+for (const t of S.TYPES) {
+  const b = document.createElement('button');
+  b.innerHTML = `<span class="sw" style="background:${META[t][1]};${t === '.' ? 'border:1px dashed var(--mute)' : ''}">${t === '.' ? '' : t}</span>${META[t][0]}<input type="checkbox" data-t="${t}" checked>`;
+  b.onclick = e => { if (e.target.tagName === 'INPUT') return; brush = t; renderPalette(); };
+  $('palette').append(b);
+}
+function renderPalette() { [...$('palette').children].forEach((b, i) => b.classList.toggle('sel', S.TYPES[i] === brush)); }
+
+const cfg = () => Object.fromEntries(['rfPerPulse', 'absorberRate', 'ventBaseRate', 'ventRelativeRate', 'maxHeat'].map(k => [k, +$(k).value]));
+const opts = () => ({ cfg: cfg(), limit: +$('limit').value, height: +$('h').value });
+const rows = () => grid.map(r => r.join(''));
+
+function heatColor(h, limit) {
+  const f = Math.max(0, Math.min(1, h / limit));
+  return `hsl(${200 - f * 200} 80% ${f ? 45 : 50}% / ${0.15 + f * 0.75})`;
+}
+
+function render(heat) {
+  const m = evalRes.m, limit = evalRes.limit;
+  const at = new Map(m.order.map((k, i) => [k + '', i]));
+  $('grid').style.gridTemplateColumns = `repeat(${grid[0].length}, 54px)`;
+  $('grid').innerHTML = '';
+  grid.forEach((row, z) => row.forEach((t, x) => {
+    const c = document.createElement('div'), i = at.get(x + ',' + z);
+    c.className = 'cell';
+    c.style.borderColor = t === '.' ? 'var(--line)' : META[t][1];
+    if (i !== undefined) {
+      const h = heat[i];
+      c.style.background = heatColor(h, limit);
+      c.innerHTML = `<b>${t}</b><small>${h}</small>${m.pulses[i] ? `<i>${m.pulses[i]}p</i>` : ''}`;
+      c.title = `${META[t][0]} · heat ${h}${m.pulses[i] ? ` · ${m.pulses[i]} pulses · +${S.heatPerTick(m.pulses[i])} heat/t` : ''}`;
+    }
+    c.onmousedown = e => { painting = e.button === 2 ? '.' : brush; paint(x, z); };
+    c.onmouseenter = () => painting && paint(x, z);
+    c.oncontextmenu = e => e.preventDefault();
+    $('grid').append(c);
+  }));
+}
+document.onmouseup = () => { if (painting) { painting = null; update(); } };
+function paint(x, z) { grid[z][x] = painting; evalRes.m = S.compile(rows()); render(new Int32Array(evalRes.m.n)); }
+
+const fmt = n => Math.round(n).toLocaleString();
+const stat = (k, v, cls = '') => `<div class="stat"><span>${k}</span><span class="${cls}">${v}</span></div>`;
+
+function update() {
+  stopLive();
+  const H = +$('h').value;
+  evalRes = S.evaluate(rows(), { ...opts(), ticks: 40000 });
+  const e = evalRes;
+  render(e.heat);
+  $('txt').value = `H=${H}\n` + rows().join('\n');
+  $('stats').innerHTML =
+    stat('Status', e.overheated ? `OVERHEATS (tick ${e.tick})` : e.stable ? 'Stable' : 'Heat still climbing', e.stable ? 'ok' : 'bad') +
+    stat('Peak heat', `${e.overheated ? '>' : ''}${fmt(e.peak)} / ${e.limit}`) +
+    stat('Output', `${fmt(e.rf)} RF/t`) +
+    stat('Per layer', `${fmt(e.rf / H)} RF/t`) +
+    stat('Energy ports needed', Math.ceil(e.rf / 25000) + ' (25k RF/t each)') +
+    stat('RF per fuel unit', fmt(e.eff));
+  const cap = +$('fuelItem').value, perHour = 72000;
+  const iceRate = e.overheated ? 0 : e.coolant;
+  $('fuelStats').innerHTML =
+    stat('Fuel use', `${fmt(e.fuel)} units/t`) +
+    stat('Fuel items / hour', (e.fuel * perHour / cap).toFixed(1)) +
+    stat('Ice / hour', (iceRate * perHour / 1000).toFixed(1)) +
+    stat('RF per item', fmt(e.eff * cap));
+  // ceiling + BOM
+  const W = grid[0].length, D = grid.length;
+  $('ceiling').style.gridTemplateColumns = `repeat(${W}, 22px)`;
+  $('ceiling').innerHTML = grid.flatMap(r => r.map(t => S.RODS[t] ? '<div style="background:#43a047;color:#fff">F</div>' : t === 'A' ? '<div style="background:#00acc1;color:#fff">A</div>' : '<div>W</div>')).join('');
+  const count = t => grid.flat().filter(c => c === t).length;
+  const ports = Math.ceil(e.rf / 25000), fuelPorts = ['1', '2', '4'].reduce((s, t) => s + count(t), 0), absPorts = count('A');
+  const shell = (W + 2) * (D + 2) * (H + 2) - W * D * H;
+  $('bom').innerHTML = S.TYPES.slice(1).filter(count).map(t => stat(META[t][0], `${count(t) * H}  (${count(t)} col × ${H})`)).join('') +
+    `<p class="hint">Shell ${W + 2}×${D + 2}×${H + 2} = <b>${shell}</b> blocks, fixed by size. Ports take shell spots, rest is walls:</p>` +
+    stat('Fuel ports (ceiling)', fuelPorts) + (absPorts ? stat('Absorber ports (ceiling)', absPorts) : '') +
+    stat('Controller (side face)', 1) + stat('Energy ports (side faces)', ports) +
+    stat('Reactor walls', shell - fuelPorts - absPorts - 1 - ports) +
+    `<p class="hint">Per the controller code, only the 12 edges (${4 * (W + D + H) + 8} walls) plus the column under the controller must be reactor blocks; other face spots accept any non-reactor block, e.g. glass. Not tested in-game.</p>`;
+
+  // ports throw away leftover fuel smaller than one tick's draw (rodCount × height) when loading the next item
+  const rodAmounts = ['1', '2', '4'].filter(count).map(t => S.RODS[t][0] * H);
+  const waste = rodAmounts.length ? Math.max(...rodAmounts.map(a => (cap % a) / cap)) : 0;
+  const okH = [];
+  for (let h = 1; h <= 62; h++) if (['1', '2', '4'].filter(count).every(t => cap % (S.RODS[t][0] * h) === 0)) okH.push(h);
+  $('fuelStats').innerHTML += stat('Fuel wasted per item', (waste * 100).toFixed(1) + '%', waste ? 'bad' : 'ok') +
+    (rodAmounts.length ? `<p class="hint">Zero-waste heights: ${okH.join(', ')}</p>` : '');
+}
+
+// live sim from zero heat
+function stopLive() { if (live) { clearInterval(live.timer); live = null; $('play').textContent = '▶ Live sim'; } }
+$('play').onclick = () => {
+  if (live) return stopLive();
+  live = { heat: new Int32Array(evalRes.m.n), t: 0 };
+  $('play').textContent = '⏸ Pause';
+  live.timer = setInterval(() => {
+    const n = +$('speed').value, r = S.run(evalRes.m, n, { ...S.CFG, ...cfg() }, Infinity, live.heat);
+    live.t += n;
+    render(r.heat);
+    $('tick').textContent = `tick ${live.t} (${(live.t / 20).toFixed(0)}s)`;
+  }, 50);
+};
+$('reset').onclick = () => { stopLive(); $('tick').textContent = ''; update(); };
+
+function resize() {
+  const W = Math.max(1, +$('w').value), D = Math.max(1, +$('d').value);
+  grid = Array.from({ length: D }, (_, z) => Array.from({ length: W }, (_, x) => grid[z]?.[x] ?? '.'));
+  update();
+}
+['w', 'd'].forEach(id => $(id).onchange = resize);
+['h', 'fuelItem', 'rfPerPulse', 'absorberRate', 'ventBaseRate', 'ventRelativeRate', 'maxHeat', 'limit'].forEach(id => $(id).onchange = update);
+$('clear').onclick = () => { grid = grid.map(r => r.map(() => '.')); update(); };
+
+$('load').onclick = () => {
+  const lines = $('txt').value.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const hLine = lines[0].match(/^H=(\d+)/);
+  if (hLine) { $('h').value = hLine[1]; lines.shift(); }
+  const W = Math.max(...lines.map(l => l.length));
+  grid = lines.map(l => [...l.padEnd(W, '.')].map(c => S.TYPES.includes(c) ? c : '.'));
+  $('w').value = W; $('d').value = grid.length;
+  update();
+};
+
+// optimizer, chunked so the page stays responsive
+let optRun = null;
+$('opt').onclick = () => {
+  if (optRun) { optRun.stop = true; return; }
+  const allowed = [...document.querySelectorAll('[data-t]')].filter(c => c.checked).map(c => c.dataset.t);
+  if (!allowed.includes('.')) allowed.push('.');
+  const iters = +$('iters').value;
+  const gen = S.optimize(grid, { cfg: cfg(), limit: +$('limit').value, allowed, objective: $('obj').value, iters });
+  optRun = { stop: false, shown: null };
+  $('opt').textContent = 'Stop';
+  const step = () => {
+    const t0 = performance.now();
+    let s;
+    while (performance.now() - t0 < 40 && !(s = gen.next()).done) {
+      $('optStatus').textContent = `${s.value.i} / ${iters} · best score ${fmt(s.value.bestS)} per layer`;
+      if (s.value.best !== optRun.shown) { optRun.shown = s.value.best; grid = s.value.best.map(r => [...r]); update(); }
+    }
+    if (s && !s.done && !optRun.stop) return setTimeout(step, 0);
+    optRun = null; $('opt').textContent = 'Optimize';
+    $('optStatus').textContent += ' · done';
+  };
+  step();
+};
+
+// Found by 8 annealing chains + exhaustive 1/2-cell polish (best found, not proven optimal).
+// Heat ignores height, so any H works; 20 is a zero-waste height for single + double rods.
+const PRESETS = {
+  '5×5 max power (ice)': 'H=20\n2A21A\n12A21\nA21A2\n2A22A\n2PA12',
+  '5×5 passive (no ice)': 'H=20\n2V21V\n1VVV2\n2V121\nV21VV\n2V12V',
+};
+for (const k in PRESETS) $('preset').add(new Option(k, k));
+$('preset').onchange = () => { if (PRESETS[$('preset').value]) { $('txt').value = PRESETS[$('preset').value]; $('load').click(); } };
+
+renderPalette();
+resize();
+</script>
+</body>
+</html>
