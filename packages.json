@@ -52,6 +52,11 @@
         "key": "InSide",
         "prompt": "Side touching redstone port comparator",
         "default": "back"
+      },
+      {
+        "key": "OpenBelow",
+        "prompt": "Gate opens (fuel allowed) when signal is below this, 1 = only when empty",
+        "default": "1"
       }
     ],
     "files": [
