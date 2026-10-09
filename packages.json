@@ -1,4 +1,31 @@
 {
+  "RS_ItemToRedstone": {
+    "desc": "Redstone out while an RS item is at/below a count",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "Item",
+        "prompt": "Item id to watch",
+        "default": "minecraft:soul_sand"
+      },
+      {
+        "key": "Threshold",
+        "prompt": "Signal on when count is at or below",
+        "default": "16384"
+      },
+      {
+        "key": "OutSide",
+        "prompt": "Redstone output side",
+        "default": "back"
+      }
+    ],
+    "files": [
+      "programs/RS_ItemToRedstone.lua"
+    ],
+    "main": "programs/RS_ItemToRedstone.lua"
+  },
   "cn_lib": {
     "desc": "shared config helper (auto-installed as a dependency)",
     "files": [
