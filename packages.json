@@ -27,7 +27,7 @@
     "main": "programs/RS_ItemToRedstone.lua"
   },
   "RS_Trash": {
-    "desc": "Trash RS items/tags above a keep count (list in RS_Trash.json)",
+    "desc": "Trash RS items above a keep count, or whole tags (list in RS_Trash.json)",
     "deps": [
       "cn_lib"
     ],
