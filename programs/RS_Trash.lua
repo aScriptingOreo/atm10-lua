@@ -51,7 +51,7 @@ end
 print("trashing -> " .. TARGET)
 while true do
   local list = load() -- reload each pass: edit the json live, no restart
-  local ok, items = pcall(bridge.listItems)
+  local ok, items = pcall(bridge.getItems) -- AP 0.8 name (was listItems)
   if not ok then print("error: " .. tostring(items)) items = {} end
   local merged = {} -- ignoreNBT totals by id
   for _, it in ipairs(items) do
