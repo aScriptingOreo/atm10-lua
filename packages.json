@@ -26,6 +26,24 @@
     ],
     "main": "programs/RS_ItemToRedstone.lua"
   },
+  "RS_Trash": {
+    "desc": "Trash RS items/tags above a keep count (list in RS_Trash.json)",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "ExportDir",
+        "prompt": "Bridge side facing the trash",
+        "default": "down"
+      }
+    ],
+    "files": [
+      "programs/RS_Trash.lua",
+      "programs/RS_Trash.json"
+    ],
+    "main": "programs/RS_Trash.lua"
+  },
   "cn_lib": {
     "desc": "shared config helper (auto-installed as a dependency)",
     "files": [

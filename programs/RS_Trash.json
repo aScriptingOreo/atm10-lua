@@ -1,0 +1,6 @@
+{
+  "irons_spellbooks:scroll": { "keep": 0, "ignoreNBT": true },
+  "irons_spellbooks:evoker_spell_book": { "keep": 0, "ignoreNBT": true },
+  "reliquary:witch_hat": { "keep": 0, "ignoreNBT": true },
+  "minecraft:totem_of_undying": 1000
+}
