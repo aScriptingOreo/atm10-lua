@@ -22,14 +22,22 @@ local function load()
   return t or error("bad json in " .. LIST, 0)
 end
 
-local CHUNK = 576 -- max per export call; keeps each server tick cheap
+local PER_PASS = 64 -- max items trashed per entry per pass
 
+-- ONE item per call: AP ignores max stack size on export, and the trash can crashes the
+-- server saving an oversized stack (576 spell books in one slot = crash loop). Never raise this.
 local function export(filter, n)
-  filter.count = math.min(n, CHUNK)
-  local _, got, err = pcall(bridge.exportItem, TARGET, filter)
-  if got and got > 0 or err then
-    print(("%s -%s%s"):format(filter.name or filter.tag, tostring(got), err and (" (" .. tostring(err) .. ")") or ""))
+  filter.count = 1
+  local total = 0
+  for _ = 1, math.min(n, PER_PASS) do
+    local _, got, err = pcall(bridge.exportItem, TARGET, filter)
+    if err or not got or got < 1 then
+      if err then print(("%s: %s"):format(filter.name or filter.tag, tostring(err))) end
+      break
+    end
+    total = total + got
   end
+  if total > 0 then print(("%s -%d"):format(filter.name or filter.tag, total)) end
 end
 
 print("trashing -> " .. TARGET)
@@ -39,12 +47,12 @@ while true do
   for key, r in pairs(load()) do -- reload each pass: edit the json live, no restart
     local keep = type(r) == "table" and (r.keep or 0) or r
     if key:sub(1, 1) == "#" then
-      export({ tag = key:sub(2) }, CHUNK)
+      export({ tag = key:sub(2) }, PER_PASS)
     else
       local ok, info = pcall(bridge.getItem, { name = key })
       local extra = ok and ((info or {}).count or 0) - keep or 0
       -- name-only filter matches any NBT; keep 0 = always try, so every variant drains
-      if keep == 0 then extra = CHUNK end
+      if keep == 0 then extra = PER_PASS end
       if extra > 0 then export({ name = key }, extra) end
     end
   end
