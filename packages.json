@@ -34,12 +34,17 @@
       },
       {
         "key": "Batch",
-        "prompt": "Pellets per export / craft",
+        "prompt": "Pellets per export",
         "default": "8"
       },
       {
         "key": "Stock",
         "prompt": "Craft when RS holds fewer than",
+        "default": "8"
+      },
+      {
+        "key": "CraftBatch",
+        "prompt": "Pellets per craft request",
         "default": "64"
       }
     ],

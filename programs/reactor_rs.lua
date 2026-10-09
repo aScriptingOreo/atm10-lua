@@ -1,11 +1,12 @@
--- Computer B: next to an RS Bridge. While the gate is open, keep pellets stocked and push them out.
+-- Computer B: next to an RS Bridge. Always keeps pellets stocked in RS; pushes them out only while the gate is open.
 -- @desc RS Bridge pellet feeder, listens for reactor_sensor
 -- @deps cn_lib
 -- @config ReactorName|Reactor name (same on sensor + RS computer)
 -- @config ExportDir|Bridge side facing the fuel port|down
 -- @config Pellet|Pellet item id|oritech:uranium_pellet
--- @config Batch|Pellets per export / craft|8
--- @config Stock|Craft when RS holds fewer than|64
+-- @config Batch|Pellets per export|8
+-- @config Stock|Craft when RS holds fewer than|8
+-- @config CraftBatch|Pellets per craft request|64
 local cfg = dofile("/lib/cn.lua")
 local PELLET = cfg.Pellet or "oritech:uranium_pellet"
 local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fuel port
@@ -13,8 +14,9 @@ local EXPORT_DIR = cfg.ExportDir or "down" -- bridge side facing the reactor fue
 local TARGET = EXPORT_DIR:match("^@") and EXPORT_DIR
   or (({ up = 1, down = 1, north = 1, south = 1, east = 1, west = 1, front = 1, back = 1, left = 1, right = 1, top = 1, bottom = 1 })[EXPORT_DIR] and "@" .. EXPORT_DIR)
   or EXPORT_DIR
-local STOCK = tonumber(cfg.Stock) or 64 -- craft when RS holds fewer than this
-local BATCH = tonumber(cfg.Batch) or 8  -- pellets per craft / export call
+local STOCK = tonumber(cfg.Stock) or 8  -- craft when RS holds fewer than this
+local BATCH = tonumber(cfg.Batch) or 8  -- pellets per export call
+local CRAFT_BATCH = tonumber(cfg.CraftBatch) or 64 -- pellets per craft request
 local COOLDOWN = 60      -- seconds between craft requests (isCrafting alone let them pile up)
 local TIMEOUT = 30       -- no sensor message this long -> gate closed
 local PROTO = "reactor:" .. (cfg.ReactorName or error("cookienet config ReactorName=<name>", 0))
@@ -31,17 +33,17 @@ end
 
 local function tick()
   if os.clock() - last > TIMEOUT then setOpen(false) end
-  if not open then return end
   local item = { name = PELLET }
   local info = bridge.getItem(item) or {}
   local have = info.count or 0 -- AP 0.8 field is `count`
   if have < STOCK and os.clock() >= nextCraft then
     local busy = bridge.isCrafting(item)
-    print("have " .. have .. ", crafting " .. BATCH .. " (isCrafting=" .. tostring(busy) .. ")")
-    if not busy then bridge.craftItem({ name = PELLET, count = BATCH }) end
+    print("have " .. have .. ", crafting " .. CRAFT_BATCH .. " (isCrafting=" .. tostring(busy) .. ")")
+    if not busy then bridge.craftItem({ name = PELLET, count = CRAFT_BATCH }) end
     nextCraft = os.clock() + COOLDOWN
   end
-  if have > 0 then
+  -- crafting above runs regardless of the gate; only feeding the reactor waits for it
+  if open and have > 0 then
     -- AP 0.8: exportItem(target, filter). Returns count or nil, err
     local n, err = bridge.exportItem(TARGET, { name = PELLET, count = BATCH })
     print("exported " .. tostring(n) .. (err and (" (" .. tostring(err) .. ")") or ""))
