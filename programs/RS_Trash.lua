@@ -8,7 +8,7 @@ local EXPORT_DIR = cfg.ExportDir or "down"
 local LIST = "/programs/RS_Trash.json"
 -- { "item:id": keep, "#tag:id": 0 }  (object form { "keep": N } also accepted)
 -- keep = max count left in RS. Any NBT variant matches. "#tag" entries trash everything in the tag.
-local POLL = 5 -- seconds
+local POLL = 1 -- seconds
 -- AP 0.8 target: "@<direction>" = side of the bridge, anything else = peripheral name on the network
 local DIRS = { up = 1, down = 1, north = 1, south = 1, east = 1, west = 1, front = 1, back = 1, left = 1, right = 1, top = 1, bottom = 1 }
 local TARGET = DIRS[EXPORT_DIR] and "@" .. EXPORT_DIR or EXPORT_DIR
@@ -28,16 +28,20 @@ local PER_PASS = 64 -- max items trashed per entry per pass
 -- server saving an oversized stack (576 spell books in one slot = crash loop). Never raise this.
 local function export(filter, n)
   filter.count = 1
-  local total = 0
-  for _ = 1, math.min(n, PER_PASS) do
-    local _, got, err = pcall(bridge.exportItem, TARGET, filter)
-    if err or not got or got < 1 then
-      if err then print(("%s: %s"):format(filter.name or filter.tag, tostring(err))) end
-      break
+  local total, errs = 0, nil
+  local jobs = {}
+  -- all calls queued at once: CC runs a computer's queued main-thread calls in the same
+  -- tick (up to its per-tick time budget) instead of one call per tick sequentially
+  for i = 1, math.min(n, PER_PASS) do
+    jobs[i] = function()
+      local _, got, err = pcall(bridge.exportItem, TARGET, filter)
+      if got and got > 0 then total = total + got elseif err then errs = err end
     end
-    total = total + got
   end
-  if total > 0 then print(("%s -%d"):format(filter.name or filter.tag, total)) end
+  parallel.waitForAll(table.unpack(jobs))
+  if total > 0 or errs then
+    print(("%s -%d%s"):format(filter.name or filter.tag, total, errs and (" (" .. tostring(errs) .. ")") or ""))
+  end
 end
 
 print("trashing -> " .. TARGET)
