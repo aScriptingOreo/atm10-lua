@@ -1,6 +1,7 @@
 -- Live ME network display on advanced monitor(s). Run the same program on every computer with a screen:
 -- the one with an ME Bridge is the main (polls + broadcasts over rednet), the others just draw what it sends.
 -- View auto: a short strip shows fill gauges, a big monitor the full dashboard.
+-- Dashboard longer than the monitor: right-click the monitor for the next page.
 -- @desc Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids
 -- @deps cn_lib
 -- @config TextScale|Monitor text scale (0.5 = most data)|0.5
@@ -70,8 +71,11 @@ end
 
 -- ---- drawing (into an invisible window, flipped once per frame: no flicker) ----
 local win, W, H
+local top, oy = 1, 0       -- first drawable row, scroll offset (dashboard paging)
+local page, pages = 0, 1
 local function put(x, y, s, fg, bg)
-  if y < 1 or y > H then return end
+  y = y - oy
+  if y < top or y > H then return end
   win.setCursorPos(x, y)
   win.setTextColour(fg or colours.white)
   win.setBackgroundColour(bg or colours.black)
@@ -162,7 +166,6 @@ local function cpus(x, y, w)
   y = header(x, y, w, "CRAFTING CPUS", busy .. " / " .. #list .. " busy")
   table.sort(list, function(a, b) return (a.isBusy and 1 or 0) > (b.isBusy and 1 or 0) end)
   for _, c in ipairs(list) do
-    if y > H then break end
     local label = ("%s %s+%s"):format(c.name or "CPU", fmt(c.storage), tostring(c.coProcessors or 0))
     put(x, y, "\7 " .. label, c.isBusy and colours.lime or colours.grey)
     local job = c.isBusy and type(c.craftingJob) == "table" and c.craftingJob
@@ -198,37 +201,52 @@ local function ranked(x, y, w, rows, title, data, unit)
   return y + 1
 end
 
--- one fat gauge per resource, side by side on a wide strip, stacked on a tall one
+-- one fat gauge per resource: stacked left-to-right bars on a tall monitor,
+-- side-by-side columns filling bottom-to-top on a short one
 local function gauges()
   local g = {}
   local function add(label, used, max, unit, col)
     if used and max and max > 0 then
       local f = used / max
-      g[#g + 1] = { label, f, col and col(f) or fullness(f), fmt(used) .. " / " .. fmt(max) .. unit }
+      g[#g + 1] = { label, f, col and col(f) or fullness(f), fmt(used) .. " / " .. fmt(max) .. unit, fmt(max - used) .. " free", fmt(max - used) }
     end
   end
   add("ITEMS", s.getUsedItemStorage, s.getMaxItemStorage, " B")
   add("FLUIDS", s.getUsedFluidStorage, s.getMaxFluidStorage, " B")
-  add("CHEMICALS", s.getUsedChemicalStorage, s.getMaxChemicalStorage, " B")
-  add("EXTERNAL", s.getUsedExternalItemCount, s.getMaxExternalItemCount, "")
+  add("CHEM", s.getUsedChemicalStorage, s.getMaxChemicalStorage, " B")
+  add("EXT", s.getUsedExternalItemCount, s.getMaxExternalItemCount, "")
   add("ENERGY", s.getStoredEnergy, s.getEnergyCapacity, " AE", function(f)
     return f <= 0.1 and colours.red or f <= 0.3 and colours.orange or colours.yellow
   end)
   local busy = 0
   for _, c in ipairs(s.getCraftingCPUs or {}) do if c.isBusy then busy = busy + 1 end end
-  add("CPUS BUSY", busy, #(s.getCraftingCPUs or {}), "", function() return colours.cyan end)
+  add("CPUS", busy, #(s.getCraftingCPUs or {}), "", function() return colours.cyan end)
   if #g == 0 then return put(1, 1, s.noSignal and "NO SIGNAL" or s.isOnline and "no data" or "ME OFFLINE", colours.red) end
 
   local stacked = H >= #g * 4
   local cw, ch = stacked and W or math.floor(W / #g), stacked and math.floor(H / #g) or H
+  local w = stacked and cw or cw - 1 -- 1 column gap between side-by-side gauges
+  -- same detail lines on every gauge so the bars line up; narrow columns fall back to "free:" + number
+  local function fits(k) for _, v in ipairs(g) do if #v[k] > w then return false end end return true end
+  local detail = fits(5) and { fits(4) and 4 or nil, 5 } or { "free:", 6 }
   for i, v in ipairs(g) do
     local x, y = stacked and 1 or (i - 1) * cw + 1, stacked and (i - 1) * ch + 1 or 1
-    local w = stacked and cw or cw - 1 -- 1 column gap between side-by-side gauges
-    put(x, y, v[1])
-    rput(x, y, w, ("%5.1f%%"):format(v[2] * 100), v[3])
-    local top = y + 1
-    if ch >= 4 then put(x, top, v[4]:sub(1, w), colours.lightGrey); top = top + 1 end
-    for r = top, y + ch - (stacked and 2 or 1) do bar(x, r, w, v[2], v[3]) end
+    local last = stacked and y + ch - 2 or H -- last bar row
+    local pct = ("%.1f%%"):format(v[2] * 100)
+    put(x, y, v[1]:sub(1, w))
+    if #v[1] + 1 + #pct > w then y = y + 1 end -- narrow column: percentage on its own line
+    rput(x, y, w, pct, v[3])
+    y = y + 1
+    for _, d in pairs(detail) do -- pairs: the list may have a hole at 1
+      if last - y >= 3 then put(x, y, v[d] or d, colours.lightGrey); y = y + 1 end
+    end
+    if stacked then
+      for r = y, last do bar(x, r, w, v[2], v[3]) end
+    else
+      local rows = last - y + 1
+      local n = math.floor(rows * math.min(1, v[2]) + 0.5)
+      for r = 0, rows - 1 do put(x, last - r, (" "):rep(w), nil, r < n and v[3] or colours.grey) end
+    end
   end
 end
 
@@ -237,15 +255,15 @@ local function frame(m, fn)
   win = window.create(m, 1, 1, W, H, false)
   win.setBackgroundColour(colours.black)
   win.clear()
+  top, oy = 1, 0
   fn()
   win.setVisible(true)
 end
 
 local function draw()
-  local online = s.isOnline
-  put(1, 1, (" "):rep(W), nil, online and colours.blue or colours.red)
-  put(2, 1, "ME NETWORK  \7 " .. (s.noSignal and "NO SIGNAL" or online and "ONLINE" or "OFFLINE"), colours.white, online and colours.blue or colours.red)
-  rput(1, 1, W - 1, os.date("%H:%M:%S"), colours.white, online and colours.blue or colours.red)
+  -- content first (rows 3..H, scrolled by whole pages), title bar last so it knows the page count
+  if page >= pages then page = 0 end
+  top, oy = 3, page * (H - 2)
 
   local two = W >= 70 -- two columns when there is room, else one long stack
   local lw = two and math.floor(W / 2) - 1 or W
@@ -254,6 +272,7 @@ local function draw()
   y = energy(1, y, lw)
   y = cells(1, y, lw)
   y = cpus(1, y, lw)
+  local bottom = y
 
   local lists = {}
   for _, l in ipairs({ { "TOP ITEMS", scan.items, "" }, { "TOP FLUIDS", scan.fluids, " B" }, { "TOP CHEMICALS", scan.chemicals, " B" } }) do
@@ -261,15 +280,23 @@ local function draw()
   end
   local x, w = 1, lw
   if two then x, y, w = lw + 3, 3, W - lw - 2 end
-  -- fluids/chemicals take what they need (max a quarter of the space each), items get the rest;
-  -- 2 lines per list go to header + gap
-  local left, rows = H - y + 1, {}
+  -- the lists share one page of rows: fluids/chemicals take what they need (max a quarter each),
+  -- items get the rest; 2 lines per list go to header + gap
+  local left, rows = H - 2, {}
   for i = #lists, 1, -1 do
-    rows[i] = i == 1 and left - 2 or math.min(#lists[i][2].rows, math.floor((H - y + 1) / 4) - 2)
+    rows[i] = i == 1 and left - 2 or math.min(#lists[i][2].rows, math.floor((H - 2) / 4) - 2)
     left = left - rows[i] - 2
   end
   for i, l in ipairs(lists) do y = ranked(x, y, w, rows[i], l[1], l[2], l[3]) end
   if #lists == 0 and two then put(x, y, SCAN_EVERY > 0 and "scanning..." or "item scan off (ScanEvery=0)", colours.grey) end
+  pages = math.max(1, math.ceil((math.max(bottom, y) - 4) / (H - 2)))
+
+  top, oy = 1, 0
+  local online = s.isOnline
+  local bg = online and colours.blue or colours.red
+  put(1, 1, (" "):rep(W), nil, bg)
+  put(2, 1, "ME NETWORK  \7 " .. (s.noSignal and "NO SIGNAL" or online and "ONLINE" or "OFFLINE"), colours.white, bg)
+  rput(1, 1, W - 1, (pages > 1 and ("tap: page %d/%d   "):format(page + 1, pages) or "") .. os.date("%H:%M:%S"), colours.white, bg)
 end
 
 -- sum NBT variants per id, sort by amount, diff against the previous scan
@@ -342,8 +369,6 @@ local function update()
 end
 
 local function render()
-  usage[#usage + 1] = s.getEnergyUsage or 0
-  if #usage > 200 then table.remove(usage, 1) end
   for i, m in ipairs(mons) do
     local _, h = m.getSize()
     local v = VIEW
@@ -354,11 +379,27 @@ local function render()
 end
 
 print(bridge and "main: polling ME bridge" or "remote display: waiting for main on rednet")
-while true do
-  local ok, err = pcall(function() update(); render() end)
-  if not ok then
-    if err == "Terminated" then error(err, 0) end
-    print("error: " .. tostring(err)) -- bridge hiccups / monitor resize shouldn't kill the display
+local function loop()
+  while true do
+    local ok, err = pcall(function()
+      update()
+      usage[#usage + 1] = s.getEnergyUsage or 0
+      if #usage > 200 then table.remove(usage, 1) end
+      render()
+    end)
+    if not ok then
+      if err == "Terminated" then error(err, 0) end
+      print("error: " .. tostring(err)) -- bridge hiccups / monitor resize shouldn't kill the display
+    end
+    sleep(bridge and POLL or 0) -- remote display is paced by rednet.receive
   end
-  sleep(bridge and POLL or 0) -- remote display is paced by rednet.receive
 end
+-- right-click any monitor: next dashboard page, redrawn right away
+local function touch()
+  while true do
+    os.pullEvent("monitor_touch")
+    page = (page + 1) % pages
+    pcall(render)
+  end
+end
+parallel.waitForAny(loop, touch)
