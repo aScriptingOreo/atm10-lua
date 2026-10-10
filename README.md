@@ -30,6 +30,11 @@ cookienet boot <pkg|off>          set or clear the startup program
 reactor to run several setups side by side. Other prompts (sides, pellet id) have defaults; press Enter to accept.
 Change later with `cookienet config InSide=left`, then `reboot`.
 
+## ME monitor
+
+`cookienet get ME_Monitor --boot` on a computer touching (or wired to) an ME Bridge and an advanced monitor.
+Bigger monitor = more rows; 70+ characters wide gets a second column. `ScanEvery=0` turns off the item/fluid scan.
+
 ## Adding a package
 
 1. Put files in the repo (programs under `programs/`).

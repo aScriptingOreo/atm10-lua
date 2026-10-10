@@ -1,4 +1,31 @@
 {
+  "ME_Monitor": {
+    "desc": "Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "TextScale",
+        "prompt": "Monitor text scale (0.5 = most data)",
+        "default": "0.5"
+      },
+      {
+        "key": "Poll",
+        "prompt": "Seconds between refreshes",
+        "default": "2"
+      },
+      {
+        "key": "ScanEvery",
+        "prompt": "Seconds between full item/fluid/cell scans (0 = off)",
+        "default": "30"
+      }
+    ],
+    "files": [
+      "programs/ME_Monitor.lua"
+    ],
+    "main": "programs/ME_Monitor.lua"
+  },
   "RS_ItemToRedstone": {
     "desc": "Redstone out while an RS item is at/below a count",
     "deps": [
