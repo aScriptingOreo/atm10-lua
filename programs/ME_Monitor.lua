@@ -201,6 +201,23 @@ local function ranked(x, y, w, rows, title, data, unit)
   return y + 1
 end
 
+-- waterfall of what went in / out between scans, newest on top
+local function activity(x, y, w, rows, feed)
+  y = header(x, y, w, "ACTIVITY", "in / out between scans")
+  if #feed == 0 then
+    put(x, y, "no changes yet", colours.grey)
+    return y + 2
+  end
+  for i = 1, math.min(#feed, rows) do
+    local e = feed[i]
+    put(x, y, e.t, colours.grey)
+    rput(x + 9, y, 10, (e.delta > 0 and "+" or "-") .. fmt(math.abs(e.delta)) .. e.unit, e.delta > 0 and colours.lime or colours.red)
+    put(x + 20, y, e.name:sub(1, math.max(0, w - 20)))
+    y = y + 1
+  end
+  return y + 1
+end
+
 -- one fat gauge per resource: stacked left-to-right bars on a tall monitor,
 -- side-by-side columns filling bottom-to-top on a short one
 local function gauges()
@@ -283,6 +300,12 @@ local function draw()
   -- the lists share one page of rows: fluids/chemicals take what they need (max a quarter each),
   -- items get the rest; 2 lines per list go to header + gap
   local left, rows = H - 2, {}
+  -- activity feed first: half the right column, or a page of its own when everything is one column
+  if scan.feed then
+    local n = math.max(1, math.min(#scan.feed, two and math.floor((H - 2) / 2) - 2 or H - 4))
+    y = activity(x, y, w, n, scan.feed)
+    if two then left = left - n - 2 end
+  end
   for i = #lists, 1, -1 do
     rows[i] = i == 1 and left - 2 or math.min(#lists[i][2].rows, math.floor((H - 2) / 4) - 2)
     left = left - rows[i] - 2
@@ -301,7 +324,8 @@ end
 
 -- sum NBT variants per id, sort by amount, diff against the previous scan
 local prev = {}
-local function rank(kind, list, div)
+local feed = {} -- activity log, newest first: { t, name, delta, unit }
+local function rank(kind, list, div, unit)
   if not list then return nil end
   local by, rows, total = {}, {}, 0
   for _, it in ipairs(list) do
@@ -315,11 +339,24 @@ local function rank(kind, list, div)
   end
   table.sort(rows, function(a, b) return a.count > b.count end)
   local now, p = {}, prev[kind]
+  local changes = {}
   for _, r in ipairs(rows) do
-    r.delta = p and r.count - (p[r.id] or 0) or 0
-    now[r.id] = r.count
+    r.delta = p and r.count - (p[r.id] and p[r.id].count or 0) or 0
+    now[r.id] = r
+    if r.delta ~= 0 then changes[#changes + 1] = { name = r.name, delta = r.delta } end
+  end
+  for id, r in pairs(p or {}) do -- gone completely since the last scan
+    if not now[id] then changes[#changes + 1] = { name = r.name, delta = -r.count } end
   end
   prev[kind] = now
+  -- ponytail: resolution is one scan (AP has no item events); biggest 30 movers per scan, 100 kept
+  table.sort(changes, function(a, b) return math.abs(a.delta) > math.abs(b.delta) end)
+  for i = math.min(#changes, 30), 1, -1 do
+    local c = changes[i]
+    c.t, c.unit = os.date("%H:%M:%S"), unit
+    table.insert(feed, 1, c)
+  end
+  for i = #feed, 101, -1 do feed[i] = nil end
   local types = #rows
   for i = types, 101, -1 do rows[i] = nil end -- no monitor shows more; keeps the rednet message small
   return { rows = rows, total = total, types = types }
@@ -358,9 +395,10 @@ local function update()
   if SCAN_EVERY > 0 and os.clock() >= nextScan then
     local raw = poll(SLOW)
     scan = {
-      items = rank("items", raw.getItems, 1),
-      fluids = rank("fluids", raw.getFluids, 1000), -- mB -> buckets
-      chemicals = rank("chemicals", raw.getChemicals, 1000),
+      items = rank("items", raw.getItems, 1, ""),
+      fluids = rank("fluids", raw.getFluids, 1000, " B"), -- mB -> buckets
+      chemicals = rank("chemicals", raw.getChemicals, 1000, " B"),
+      feed = feed,
       cells = cellSummary(raw.getCells, raw.getDrives),
     }
     nextScan = os.clock() + SCAN_EVERY

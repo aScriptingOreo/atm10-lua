@@ -36,6 +36,8 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 The computer with the ME Bridge is the main: it polls and broadcasts (rednet `me_monitor`). The others just draw.
 `View` auto shows fill gauges on a short strip and the full dashboard on a big monitor; force one with
 `cookienet config View=dashboard` (or `gauges`). `ScanEvery=0` on the main turns off the item/fluid scan.
+The activity feed lists what changed between two scans, so a lower `ScanEvery` makes it livelier (and costs the server more).
+Right-click a dashboard monitor for the next page.
 
 ## Adding a package
 
