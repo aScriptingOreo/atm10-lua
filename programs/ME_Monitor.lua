@@ -1,4 +1,5 @@
--- ME Bridge + advanced monitor (next to the computer or on its wired network): live ME network dashboard.
+-- ME Bridge + advanced monitor(s), next to the computer or on its wired network: live ME network dashboard.
+-- Biggest monitor = full dashboard. A second, smaller monitor (optional) = big fill gauges.
 -- @desc Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids
 -- @deps cn_lib
 -- @config TextScale|Monitor text scale (0.5 = most data)|0.5
@@ -12,8 +13,12 @@ local POLL = tonumber(cfg.Poll) or 2
 local SCAN_EVERY = tonumber(cfg.ScanEvery) or 30
 
 local bridge = peripheral.find("me_bridge") or error("no me_bridge", 0)
-local mon = peripheral.find("monitor") or error("no monitor", 0)
-mon.setTextScale(SCALE)
+local mons = { peripheral.find("monitor") }
+if #mons == 0 then error("no monitor", 0) end
+for _, m in ipairs(mons) do m.setTextScale(SCALE) end
+local function area(m) local w, h = m.getSize() return w * h end
+table.sort(mons, function(a, b) return area(a) > area(b) end)
+local mon, gaugeMon = mons[1], mons[2]
 
 -- cheap numbers, every POLL
 local FAST = { "isOnline", "getStoredEnergy", "getEnergyCapacity", "getEnergyUsage", "getAverageEnergyInput", "getCraftingCPUs" }
@@ -195,12 +200,50 @@ local function ranked(x, y, w, rows, title, data, unit)
   return y + 1
 end
 
-local function draw()
-  W, H = mon.getSize()
-  win = window.create(mon, 1, 1, W, H, false)
+-- second monitor: one fat gauge per resource, side by side on a wide strip, stacked on a tall one
+local function gauges()
+  local g = {}
+  local function add(label, used, max, unit, col)
+    if used and max and max > 0 then
+      local f = used / max
+      g[#g + 1] = { label, f, col and col(f) or fullness(f), fmt(used) .. " / " .. fmt(max) .. unit }
+    end
+  end
+  add("ITEMS", s.getUsedItemStorage, s.getMaxItemStorage, " B")
+  add("FLUIDS", s.getUsedFluidStorage, s.getMaxFluidStorage, " B")
+  add("CHEMICALS", s.getUsedChemicalStorage, s.getMaxChemicalStorage, " B")
+  add("EXTERNAL", s.getUsedExternalItemCount, s.getMaxExternalItemCount, "")
+  add("ENERGY", s.getStoredEnergy, s.getEnergyCapacity, " AE", function(f)
+    return f <= 0.1 and colours.red or f <= 0.3 and colours.orange or colours.yellow
+  end)
+  local busy = 0
+  for _, c in ipairs(s.getCraftingCPUs or {}) do if c.isBusy then busy = busy + 1 end end
+  add("CPUS BUSY", busy, #(s.getCraftingCPUs or {}), "", function() return colours.cyan end)
+  if #g == 0 then return put(1, 1, s.isOnline and "no data" or "ME OFFLINE", colours.red) end
+
+  local stacked = H >= #g * 4
+  local cw, ch = stacked and W or math.floor(W / #g), stacked and math.floor(H / #g) or H
+  for i, v in ipairs(g) do
+    local x, y = stacked and 1 or (i - 1) * cw + 1, stacked and (i - 1) * ch + 1 or 1
+    local w = stacked and cw or cw - 1 -- 1 column gap between side-by-side gauges
+    put(x, y, v[1])
+    rput(x, y, w, ("%5.1f%%"):format(v[2] * 100), v[3])
+    local top = y + 1
+    if ch >= 4 then put(x, top, v[4]:sub(1, w), colours.lightGrey); top = top + 1 end
+    for r = top, y + ch - (stacked and 2 or 1) do bar(x, r, w, v[2], v[3]) end
+  end
+end
+
+local function frame(m, fn)
+  W, H = m.getSize()
+  win = window.create(m, 1, 1, W, H, false)
   win.setBackgroundColour(colours.black)
   win.clear()
+  fn()
+  win.setVisible(true)
+end
 
+local function draw()
   local online = s.isOnline
   put(1, 1, (" "):rep(W), nil, online and colours.blue or colours.red)
   put(2, 1, "ME NETWORK  " .. (online and "\7 ONLINE" or "\7 OFFLINE"), colours.white, online and colours.blue or colours.red)
@@ -229,8 +272,6 @@ local function draw()
   end
   for i, l in ipairs(lists) do y = ranked(x, y, w, rows[i], l[1], l[2], l[3]) end
   if #lists == 0 and two then put(x, y, SCAN_EVERY > 0 and "scanning..." or "item scan off (ScanEvery=0)", colours.grey) end
-
-  win.setVisible(true)
 end
 
 -- sum NBT variants per id, sort by amount, diff against the previous scan
@@ -257,7 +298,7 @@ local function rank(kind, list, div)
   return { rows = rows, total = total, types = #rows }
 end
 
-print("ME monitor running (" .. peripheral.getName(mon) .. ")")
+print("dashboard -> " .. peripheral.getName(mon) .. (gaugeMon and (", gauges -> " .. peripheral.getName(gaugeMon)) or ""))
 local nextScan = 0
 while true do
   local ok, err = pcall(function()
@@ -272,7 +313,8 @@ while true do
       scan.getItems, scan.getFluids, scan.getChemicals = nil, nil, nil -- drop the raw dumps
       nextScan = os.clock() + SCAN_EVERY
     end
-    draw()
+    frame(mon, draw)
+    if gaugeMon then frame(gaugeMon, gauges) end
   end)
   if not ok then
     if err == "Terminated" then error(err, 0) end

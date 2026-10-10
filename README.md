@@ -34,6 +34,7 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 
 `cookienet get ME_Monitor --boot` on a computer touching (or wired to) an ME Bridge and an advanced monitor.
 Bigger monitor = more rows; 70+ characters wide gets a second column. `ScanEvery=0` turns off the item/fluid scan.
+A second, smaller monitor on the same computer (wired modem if it isn't touching) becomes a row of fill gauges.
 
 ## Adding a package
 
