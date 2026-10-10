@@ -32,9 +32,10 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 
 ## ME monitor
 
-`cookienet get ME_Monitor --boot` on a computer touching (or wired to) an ME Bridge and an advanced monitor.
-Bigger monitor = more rows; 70+ characters wide gets a second column. `ScanEvery=0` turns off the item/fluid scan.
-A second, smaller monitor on the same computer (wired modem if it isn't touching) becomes a row of fill gauges.
+`cookienet get ME_Monitor --boot` on every computer that has an advanced monitor; all of them need a modem.
+The computer with the ME Bridge is the main: it polls and broadcasts (rednet `me_monitor`). The others just draw.
+`View` auto shows fill gauges on a short strip and the full dashboard on a big monitor; force one with
+`cookienet config View=dashboard` (or `gauges`). `ScanEvery=0` on the main turns off the item/fluid scan.
 
 ## Adding a package
 

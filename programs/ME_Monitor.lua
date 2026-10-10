@@ -1,10 +1,12 @@
--- ME Bridge + advanced monitor(s), next to the computer or on its wired network: live ME network dashboard.
--- Biggest monitor = full dashboard. A second, smaller monitor (optional) = big fill gauges.
+-- Live ME network display on advanced monitor(s). Run the same program on every computer with a screen:
+-- the one with an ME Bridge is the main (polls + broadcasts over rednet), the others just draw what it sends.
+-- View auto: a short strip shows fill gauges, a big monitor the full dashboard.
 -- @desc Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids
 -- @deps cn_lib
 -- @config TextScale|Monitor text scale (0.5 = most data)|0.5
 -- @config Poll|Seconds between refreshes|2
 -- @config ScanEvery|Seconds between full item/fluid/cell scans (0 = off)|30
+-- @config View|What this computer's monitor shows (auto/dashboard/gauges)|auto
 local cfg = dofile("/lib/cn.lua")
 local SCALE = tonumber(cfg.TextScale) or 0.5
 local POLL = tonumber(cfg.Poll) or 2
@@ -12,13 +14,19 @@ local POLL = tonumber(cfg.Poll) or 2
 -- Kept on a slow timer; raise ScanEvery or set 0 if the server stalls on a huge network.
 local SCAN_EVERY = tonumber(cfg.ScanEvery) or 30
 
-local bridge = peripheral.find("me_bridge") or error("no me_bridge", 0)
+local VIEW = cfg.View or "auto"
+-- ponytail: one fixed protocol; add a name to it (like reactor:<name>) if two ME setups share modem range
+local PROTO = "me_monitor"
+
+local bridge = peripheral.find("me_bridge")
+local modem = peripheral.find("modem")
+if modem then rednet.open(peripheral.getName(modem)) end
+if not (bridge or modem) then error("need an me_bridge (main) or a modem (remote display)", 0) end
 local mons = { peripheral.find("monitor") }
 if #mons == 0 then error("no monitor", 0) end
 for _, m in ipairs(mons) do m.setTextScale(SCALE) end
 local function area(m) local w, h = m.getSize() return w * h end
 table.sort(mons, function(a, b) return area(a) > area(b) end)
-local mon, gaugeMon = mons[1], mons[2]
 
 -- cheap numbers, every POLL
 local FAST = { "isOnline", "getStoredEnergy", "getEnergyCapacity", "getEnergyUsage", "getAverageEnergyInput", "getCraftingCPUs" }
@@ -140,21 +148,11 @@ local function energy(x, y, w)
 end
 
 local function cells(x, y, w)
-  if not scan.getCells then return y end
-  local kinds, order, full, used, max = {}, {}, 0, 0, 0
-  for _, c in ipairs(scan.getCells) do
-    local k = tostring(c.type or "?"):gsub("^.*:", "")
-    k = ({ i = "item", f = "fluid" })[k] or k
-    if not kinds[k] then kinds[k] = 0; order[#order + 1] = k end
-    kinds[k] = kinds[k] + 1
-    used, max = used + (c.usedBytes or 0), max + (c.maxBytes or 0)
-    if (c.maxBytes or 0) > 0 and (c.usedBytes or 0) >= c.maxBytes * 0.99 then full = full + 1 end
-  end
-  y = header(x, y, w, "DRIVES & CELLS", #(scan.getDrives or {}) .. " drives  " .. #scan.getCells .. " cells")
-  local parts = {}
-  for _, k in ipairs(order) do parts[#parts + 1] = kinds[k] .. " " .. k end
-  put(x, y, table.concat(parts, "  "))
-  rput(x, y, w, full .. " full", full > 0 and colours.orange or colours.lightGrey)
+  local c = scan.cells
+  if not c then return y end
+  y = header(x, y, w, "DRIVES & CELLS", c.drives .. " drives  " .. c.count .. " cells")
+  put(x, y, c.kinds)
+  rput(x, y, w, c.full .. " full", c.full > 0 and colours.orange or colours.lightGrey)
   return y + 2
 end
 
@@ -200,7 +198,7 @@ local function ranked(x, y, w, rows, title, data, unit)
   return y + 1
 end
 
--- second monitor: one fat gauge per resource, side by side on a wide strip, stacked on a tall one
+-- one fat gauge per resource, side by side on a wide strip, stacked on a tall one
 local function gauges()
   local g = {}
   local function add(label, used, max, unit, col)
@@ -219,7 +217,7 @@ local function gauges()
   local busy = 0
   for _, c in ipairs(s.getCraftingCPUs or {}) do if c.isBusy then busy = busy + 1 end end
   add("CPUS BUSY", busy, #(s.getCraftingCPUs or {}), "", function() return colours.cyan end)
-  if #g == 0 then return put(1, 1, s.isOnline and "no data" or "ME OFFLINE", colours.red) end
+  if #g == 0 then return put(1, 1, s.noSignal and "NO SIGNAL" or s.isOnline and "no data" or "ME OFFLINE", colours.red) end
 
   local stacked = H >= #g * 4
   local cw, ch = stacked and W or math.floor(W / #g), stacked and math.floor(H / #g) or H
@@ -246,7 +244,7 @@ end
 local function draw()
   local online = s.isOnline
   put(1, 1, (" "):rep(W), nil, online and colours.blue or colours.red)
-  put(2, 1, "ME NETWORK  " .. (online and "\7 ONLINE" or "\7 OFFLINE"), colours.white, online and colours.blue or colours.red)
+  put(2, 1, "ME NETWORK  \7 " .. (s.noSignal and "NO SIGNAL" or online and "ONLINE" or "OFFLINE"), colours.white, online and colours.blue or colours.red)
   rput(1, 1, W - 1, os.date("%H:%M:%S"), colours.white, online and colours.blue or colours.red)
 
   local two = W >= 70 -- two columns when there is room, else one long stack
@@ -295,30 +293,72 @@ local function rank(kind, list, div)
     now[r.id] = r.count
   end
   prev[kind] = now
-  return { rows = rows, total = total, types = #rows }
+  local types = #rows
+  for i = types, 101, -1 do rows[i] = nil end -- no monitor shows more; keeps the rednet message small
+  return { rows = rows, total = total, types = types }
 end
 
-print("dashboard -> " .. peripheral.getName(mon) .. (gaugeMon and (", gauges -> " .. peripheral.getName(gaugeMon)) or ""))
+local function cellSummary(list, drives)
+  if not list then return nil end
+  local kinds, order, full = {}, {}, 0
+  for _, c in ipairs(list) do
+    local k = tostring(c.type or "?"):gsub("^.*:", "")
+    k = ({ i = "item", f = "fluid" })[k] or k
+    if not kinds[k] then kinds[k] = 0; order[#order + 1] = k end
+    kinds[k] = kinds[k] + 1
+    if (c.maxBytes or 0) > 0 and (c.usedBytes or 0) >= c.maxBytes * 0.99 then full = full + 1 end
+  end
+  for i, k in ipairs(order) do order[i] = kinds[k] .. " " .. k end
+  return { drives = #(drives or {}), count = #list, full = full, kinds = table.concat(order, "  ") }
+end
+
 local nextScan = 0
-while true do
-  local ok, err = pcall(function()
-    s = poll(FAST)
-    usage[#usage + 1] = s.getEnergyUsage or 0
-    if #usage > 200 then table.remove(usage, 1) end
-    if SCAN_EVERY > 0 and os.clock() >= nextScan then
-      scan = poll(SLOW)
-      scan.items = rank("items", scan.getItems, 1)
-      scan.fluids = rank("fluids", scan.getFluids, 1000)       -- mB -> buckets
-      scan.chemicals = rank("chemicals", scan.getChemicals, 1000)
-      scan.getItems, scan.getFluids, scan.getChemicals = nil, nil, nil -- drop the raw dumps
-      nextScan = os.clock() + SCAN_EVERY
+local function update()
+  if not bridge then
+    local _, msg = rednet.receive(PROTO, 10)
+    if type(msg) == "table" then s, scan = msg.s or {}, msg.scan or {} else s, scan = { noSignal = true }, {} end
+    return
+  end
+  s = poll(FAST)
+  -- keep only what gets drawn: job tables nest the whole CPU and the item's components
+  for _, c in ipairs(s.getCraftingCPUs or {}) do
+    local job = type(c.craftingJob) == "table" and c.craftingJob
+    if job then
+      local res = type(job.resource) == "table" and job.resource or {}
+      c.craftingJob = { quantity = job.quantity, completion = job.completion, resource = { displayName = res.displayName or res.name } }
     end
-    frame(mon, draw)
-    if gaugeMon then frame(gaugeMon, gauges) end
-  end)
+  end
+  if SCAN_EVERY > 0 and os.clock() >= nextScan then
+    local raw = poll(SLOW)
+    scan = {
+      items = rank("items", raw.getItems, 1),
+      fluids = rank("fluids", raw.getFluids, 1000), -- mB -> buckets
+      chemicals = rank("chemicals", raw.getChemicals, 1000),
+      cells = cellSummary(raw.getCells, raw.getDrives),
+    }
+    nextScan = os.clock() + SCAN_EVERY
+  end
+  if modem then rednet.broadcast({ s = s, scan = scan }, PROTO) end
+end
+
+local function render()
+  usage[#usage + 1] = s.getEnergyUsage or 0
+  if #usage > 200 then table.remove(usage, 1) end
+  for i, m in ipairs(mons) do
+    local _, h = m.getSize()
+    local v = VIEW
+    -- auto: biggest monitor is the dashboard unless it is this computer's only one and just a strip
+    if v == "auto" then v = (i == 1 and (#mons > 1 or h >= 20)) and "dashboard" or "gauges" end
+    frame(m, v == "gauges" and gauges or draw)
+  end
+end
+
+print(bridge and "main: polling ME bridge" or "remote display: waiting for main on rednet")
+while true do
+  local ok, err = pcall(function() update(); render() end)
   if not ok then
     if err == "Terminated" then error(err, 0) end
     print("error: " .. tostring(err)) -- bridge hiccups / monitor resize shouldn't kill the display
   end
-  sleep(POLL)
+  sleep(bridge and POLL or 0) -- remote display is paced by rednet.receive
 end

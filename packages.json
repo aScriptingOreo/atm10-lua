@@ -19,6 +19,11 @@
         "key": "ScanEvery",
         "prompt": "Seconds between full item/fluid/cell scans (0 = off)",
         "default": "30"
+      },
+      {
+        "key": "View",
+        "prompt": "What this computer's monitor shows (auto/dashboard/gauges)",
+        "default": "auto"
       }
     ],
     "files": [
