@@ -426,21 +426,28 @@ local function drawStock()
   if #ids == 0 then tput(1, 2, "no rules yet: MANAGE tab", colours.lightGrey) end
   local id = ids[scur]
   if asking then
-    local prompt = "Keep " .. asking.label .. ": "
+    local prompt = "Keep " .. asking.label .. " (0 removes): "
     tput(1, TH - 1, prompt:sub(1, TW), colours.yellow)
     tput(#prompt + 1, TH - 1, asking.text)
     term.setCursorPos(math.min(TW, #prompt + #asking.text + 1), TH - 1)
     term.setTextColour(colours.white)
     term.setCursorBlink(true)
+  elseif note and not id then
+    tput(1, TH - 1, note:sub(1, TW), colours.lime)
   elseif id then
     local e, r = db.stock[id], rtOf(id)
     local st, col = state(e, r)
     local line, c = st .. "  keep " .. e.keep, col
     if (st == "MISSING" or st == "PREP") and r.missing then line = st .. " " .. r.missing end
     if armed then line, c = "Del again deletes it, any other key cancels", colours.red end
+    if note then line, c = note, colours.lime end
     tput(1, TH - 1, line:sub(1, TW), c)
   end
-  tput(1, TH, ("Enter keep  O on/off  L loop  Del  P pause"):sub(1, TW), colours.lightGrey)
+  if asking and note then
+    tput(1, TH, note:sub(1, TW), colours.red)
+  else
+    tput(1, TH, ("Enter keep  O on/off  L loop  Del  P pause"):sub(1, TW), colours.lightGrey)
+  end
 end
 
 function drawTerm()
@@ -469,7 +476,7 @@ function drawTerm()
   if view == "STOCK" then return drawStock() end
   local prompt, text = "Search: ", query
   if asking then
-    prompt, text = "Keep at least: ", asking.text
+    prompt, text = "Keep at least (0 removes): ", asking.text
     tput(1, 4, (asking.label .. "  -  Enter saves, Tab cancels"):sub(1, TW), colours.lightGrey)
   else
     tput(1, 4, (#found .. " craftable. Click one, or arrows + Enter."):sub(1, TW), colours.lightGrey)
@@ -552,22 +559,27 @@ end
 
 local function choose(p)
   if not p then return end
-  asking, note = { id = p.id, label = p.label, text = tostring(db.stock[p.id] and db.stock[p.id].keep or 64) }, nil
+  asking, note = { id = p.id, label = p.label, fresh = true, text = tostring(db.stock[p.id] and db.stock[p.id].keep or 64) }, nil
 end
 
 local function editRule()
   local id = stockIds()[scur]
-  if id then asking = { id = id, label = db.stock[id].label or id, text = tostring(db.stock[id].keep) } end
+  if id then asking = { id = id, label = db.stock[id].label or id, fresh = true, text = tostring(db.stock[id].keep) } end
 end
 
 local function saveKeep()
   local n = tonumber(asking.text)
-  if not n or n < 1 then note = "type a number above 0" return end
-  local e = db.stock[asking.id] or { label = asking.label }
-  e.keep = math.floor(n)
-  db.stock[asking.id] = e
+  if not n then note = "type a number (0 removes the rule)" return end
+  if n < 1 then -- keep 0 = no rule
+    db.stock[asking.id] = nil
+    note = asking.label .. ": rule removed"
+  else
+    local e = db.stock[asking.id] or { label = asking.label }
+    e.keep = math.floor(n)
+    db.stock[asking.id] = e
+    note = asking.label .. ": keep " .. e.keep
+  end
   save()
-  note = asking.label .. ": keep " .. e.keep
   asking, query = nil, ""
   search()
   os.queueEvent("butler_poke")
@@ -591,7 +603,11 @@ end
 
 local function typed(s)
   if asking then
-    asking.text = asking.text .. s:gsub("%D", "")
+    local digits = s:gsub("%D", "")
+    if digits ~= "" then
+      if asking.fresh then asking.text, asking.fresh = "", false end
+      asking.text = asking.text .. digits
+    end
   elseif view == "STOCK" then
     armed = false
     ruleKey(s:lower())
@@ -602,6 +618,7 @@ local function typed(s)
 end
 
 local function pressed(k)
+  note = nil
   if k == keys.tab then
     armed = false
     if asking then asking = nil else openView(NEXT[view]) end
@@ -609,7 +626,8 @@ local function pressed(k)
   end
   if view == "LOG" then return end
   if asking then
-    if k == keys.backspace then asking.text = asking.text:sub(1, -2)
+    if k == keys.backspace then
+      asking.text, asking.fresh = asking.fresh and "" or asking.text:sub(1, -2), false
     elseif k == keys.enter or k == keys.numPadEnter then saveKeep() end
     return
   end

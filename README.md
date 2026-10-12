@@ -47,7 +47,7 @@ or bigger). It autocrafts every item that is below its `keep` count.
 On the computer (Tab or a click switches tab):
 
 - **LOG**: one line each time a rule changes state.
-- **STOCK**: the rules. Arrows to pick one, then `Enter` edit keep, `O` on/off, `L` loop/bulk, `Del` twice to delete,
+- **STOCK**: the rules. Arrows to pick one, then `Enter` edit keep (0 removes the rule), `O` on/off, `L` loop/bulk, `Del` twice to delete,
   `P` pause or resume all crafting. A refused craft shows what it was missing.
 - **MANAGE**: type to search the craftable items ("unob temp" finds the Unobtainium template). Click a result, or
   arrows + Enter, then type how many to keep and press Enter. Picking an item that already has a rule edits it.
