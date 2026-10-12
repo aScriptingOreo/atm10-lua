@@ -1,4 +1,31 @@
 {
+  "Butler": {
+    "desc": "ME system manager: keeps items stocked (autocraft), trashes overflow, touch dashboard on a monitor",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "TrashDir",
+        "prompt": "Bridge side facing the trash",
+        "default": "down"
+      },
+      {
+        "key": "Poll",
+        "prompt": "Seconds between stock checks",
+        "default": "10"
+      },
+      {
+        "key": "TextScale",
+        "prompt": "Monitor text scale",
+        "default": "0.5"
+      }
+    ],
+    "files": [
+      "programs/Butler.lua"
+    ],
+    "main": "programs/Butler.lua"
+  },
   "ME_Monitor": {
     "desc": "Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids",
     "deps": [
@@ -30,24 +57,6 @@
       "programs/ME_Monitor.lua"
     ],
     "main": "programs/ME_Monitor.lua"
-  },
-  "ME_Stock": {
-    "desc": "Keep ME items stocked: autocraft when below a count (list in ME_Stock.json)",
-    "deps": [
-      "cn_lib"
-    ],
-    "config": [
-      {
-        "key": "Poll",
-        "prompt": "Seconds between checks",
-        "default": "10"
-      }
-    ],
-    "files": [
-      "programs/ME_Stock.lua",
-      "programs/ME_Stock.json"
-    ],
-    "main": "programs/ME_Stock.lua"
   },
   "RS_ItemToRedstone": {
     "desc": "Redstone out while an RS item is at/below a count",

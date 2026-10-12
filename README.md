@@ -39,12 +39,29 @@ The computer with the ME Bridge is the main: it polls and broadcasts (rednet `me
 The activity feed lists what changed between two scans, so a lower `ScanEvery` makes it livelier (and costs the server more).
 Right-click a dashboard monitor for the next page.
 
-## ME stock keeper
+## Butler (ME system manager)
 
-`cookienet get ME_Stock --boot` on a computer next to an ME Bridge. It autocrafts every item in
-`programs/ME_Stock.json` that is below its keep count (`"item:id": 256`, or `{ "keep": 1024, "batch": 256 }`
-to cap one craft request). Each item needs a pattern. Edit the list in this repo and push: `cookienet update`
-(runs on boot) overwrites the copy on the computer.
+`cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (3x2 blocks or bigger;
+any sides). Everything is set up by right-clicking the monitor:
+
+- **HOME**: busy crafting CPUs, stock rules that are not satisfied, and what Butler crafted / trashed lately.
+- **STOCK**: autocraft an item while it is below `keep`. `/2` `x2` change keep, `BULK`/`1x1` switches blocking.
+- **TRASH**: export what is above `keep` out the bridge side `TrashDir`. New rules start `OFF` at the current count.
+- **ADD**: pick from craftable items (-> stock) or stored items (-> trash), filtered by first letter.
+- `ACTIVE`/`PAUSED` in the title bar stops all crafting and trashing.
+
+Rules and the log live in `/butler.json` on the computer (not in this repo, updates never touch it). Stop Butler
+before editing it by hand:
+
+```json
+{ "stock": { "minecraft:glass": 256,
+             "ae2:fluix_crystal": { "keep": 1024, "batch": 256 },
+             "minecraft:netherite_upgrade_smithing_template": { "keep": 16, "blocking": true } },
+  "trash": { "minecraft:rotten_flesh": 0 } }
+```
+
+`blocking` crafts one at a time, each job waiting for the last: use it for cyclical recipes that consume their own
+output (1 template -> 2), which AE2 cannot plan in bulk. `batch` caps one request for everything else.
 
 ## Adding a package
 
