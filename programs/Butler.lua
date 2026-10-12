@@ -419,7 +419,7 @@ local function drawStock()
     local bg = stop + i == scur and colours.grey or colours.black
     local right = (e.blocking and "LOOP " or "") .. fmt(r.have) .. "/" .. fmt(e.keep) .. " " .. st
     local w = TW - #right - 1
-    tput(1, 1 + i, ((stop + i == scur and "> " or "  ") .. (e.label or id) .. (" "):rep(TW)):sub(1, w + 1),
+    tput(1, 1 + i, ((stop + i == scur and "> " or "  ") .. (e.label or id) .. (" "):rep(TW)):sub(1, w),
       e.off and colours.lightGrey or colours.white, bg)
     tput(w + 2, 1 + i, right, col, bg)
   end
