@@ -41,19 +41,22 @@ Right-click a dashboard monitor for the next page.
 
 ## Butler (ME system manager)
 
-`cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (3x2 blocks or bigger;
-any sides). Right-click the monitor:
+`cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (any sides, 3x2 blocks
+or bigger). It autocrafts every item that is below its `keep` count. Right-click the monitor:
 
-- **HOME**: busy crafting CPUs, stock rules that are not satisfied, and what Butler crafted / trashed lately.
-- **STOCK**: autocraft an item while it is below `keep`. `/2` `x2` change keep, `BULK`/`LOOP` switches blocking.
-- **TRASH**: export what is above `keep` out the bridge side `TrashDir`. Rules added here start `OFF` at the current count.
-- **ADD**: pick from craftable items (-> stock) or stored items (-> trash), filtered by first letter.
-- `ACTIVE`/`PAUSED` in the title bar stops all crafting and trashing.
+- **HOME**: busy crafting CPUs, rules that are not satisfied, and what Butler crafted lately.
+- **STOCK**: the rules. Tap one for its buttons: `ON`/`OFF`, `BULK`/`LOOP` (blocking), `/2` `x2` (keep), `DEL`.
+  A refused craft shows what it was missing.
+- **ADD**: tap a craftable item to add a rule (keep 64). The letters filter by first letter.
+- `ACTIVE`/`PAUSED` in the title bar stops all crafting.
+
+Text size: `cookienet config TextScale=1` (0.5 to 5 in steps of 0.5), then reboot the computer.
+The terminal only prints when a rule changes state.
 
 Rules come from two places:
 
 - `programs/Butler.json` in this repo. Butler re-fetches it every `Sync` seconds (default 60; GitHub caches the
-  file, so a push lands within about 5 minutes). No reboot. The title bar shows the last good fetch.
+  file, so a push lands within about 5 minutes). No reboot. On a wide monitor the title bar shows the last fetch.
 - The monitor. Edits are kept in `/butler.json` on the computer, with the log.
 
 The repo only overrides a rule when the repo changed it: a new or edited rule is applied, a rule removed from the
@@ -62,11 +65,10 @@ file is deleted, and an untouched one keeps whatever was done to it on the monit
 ```json
 { "stock": { "minecraft:glass": 256,
              "extendedae:entro_crystal": { "keep": 16384, "batch": 1024 },
-             "minecraft:netherite_upgrade_smithing_template": { "keep": 64, "blocking": true } },
-  "trash": { "minecraft:rotten_flesh": 0 } }
+             "minecraft:netherite_upgrade_smithing_template": { "keep": 64, "blocking": true } } }
 ```
 
-- `keep`: stock = minimum, trash = maximum. A bare number is shorthand for `{ "keep": N }`.
+- `keep`: minimum count in the network. A bare number is shorthand for `{ "keep": N }`.
 - `batch`: most to request in one job. AE2 refuses a whole job it cannot afford, so cap big targets.
 - `blocking`: for recipes that eat their own output (1 template -> 2). A job can only run as many crafts as there
   are items in storage, so Butler doubles: 2 -> 4 -> 8 ... one job at a time. If a job is refused (the other

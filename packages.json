@@ -1,15 +1,10 @@
 {
   "Butler": {
-    "desc": "ME system manager: keeps items stocked (autocraft), trashes overflow, touch dashboard on a monitor",
+    "desc": "ME system manager: keeps items stocked (autocraft), touch dashboard on a monitor",
     "deps": [
       "cn_lib"
     ],
     "config": [
-      {
-        "key": "TrashDir",
-        "prompt": "Bridge side facing the trash",
-        "default": "down"
-      },
       {
         "key": "Poll",
         "prompt": "Seconds between stock checks",
@@ -17,8 +12,8 @@
       },
       {
         "key": "TextScale",
-        "prompt": "Monitor text scale",
-        "default": "0.5"
+        "prompt": "Monitor text scale (0.5 small, 1 normal, up to 5)",
+        "default": "1"
       },
       {
         "key": "Sync",
