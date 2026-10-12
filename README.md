@@ -47,15 +47,12 @@ or bigger). It autocrafts every item that is below its `keep` count.
 On the computer (Tab or a click switches tab):
 
 - **LOG**: one line each time a rule changes state.
-- **ADD**: type to search the craftable items ("unob temp" finds the Unobtainium template). Click a result, or
+- **STOCK**: the rules. Arrows to pick one, then `Enter` edit keep, `O` on/off, `L` loop/bulk, `Del` twice to delete,
+  `P` pause or resume all crafting. A refused craft shows what it was missing.
+- **MANAGE**: type to search the craftable items ("unob temp" finds the Unobtainium template). Click a result, or
   arrows + Enter, then type how many to keep and press Enter. Picking an item that already has a rule edits it.
 
-On the monitor (right-click):
-
-- **HOME**: busy crafting CPUs, rules that are not satisfied, and what Butler crafted lately.
-- **STOCK**: the rules. Tap one for its buttons: `ON`/`OFF`, `BULK`/`LOOP`, `/2` `x2` (keep), `DEL`.
-  A refused craft shows what it was missing.
-- `ACTIVE`/`PAUSED` in the title bar stops all crafting.
+The monitor is a read-only crafting dashboard: busy CPUs, rules that are not satisfied, and what Butler crafted lately.
 
 Monitor text size: `cookienet config TextScale=1` (0.5 to 5 in steps of 0.5), then reboot the computer.
 

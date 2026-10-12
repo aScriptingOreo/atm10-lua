@@ -1,7 +1,7 @@
 -- Butler: ME system manager. Computer next to an ME Bridge, advanced monitor on any side (optional).
 -- Keeps items stocked: autocrafts anything below its keep count.
--- Computer screen: LOG, and ADD (type to search craftable items, pick one, type how many to keep).
--- Monitor: HOME is the dashboard, STOCK edits rules (tap one).
+-- Computer screen: LOG, STOCK (edit the rules), MANAGE (type to search craftable items, pick one, type how many).
+-- Monitor: read-only crafting dashboard.
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
 -- @desc ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor
 -- @deps cn_lib
@@ -133,7 +133,7 @@ local function missingText(list)
   return #t > 0 and table.concat(t, ", ") or nil
 end
 
--- ---- computer screen: LOG / ADD (drawn further down, the work needs say()) ----
+-- ---- computer screen: LOG / STOCK / MANAGE (drawn further down, the work needs say()) ----
 local TW, TH = term.getSize()
 local view = "LOG"
 local lines = {} -- log, oldest first, already wrapped to the screen width
@@ -277,12 +277,8 @@ local function applyRules(remote)
 end
 
 -- ---- monitor (drawn into an invisible window, flipped once per frame: no flicker) ----
--- Laid out to still work on a 3x2 monitor at text scale 1 (29x12 characters).
+-- Read-only. Laid out to still work on a 3x2 monitor at text scale 1 (29x12 characters).
 local win, W, H
-local buttons = {}
-local TABS = { "HOME", "STOCK" }
-local tab, page = "HOME", 1
-local sel, confirm -- STOCK: selected rule id, its delete button was tapped once
 
 local function put(x, y, s, fg, bg)
   win.setCursorPos(x, y)
@@ -291,11 +287,6 @@ local function put(x, y, s, fg, bg)
   win.write(s)
 end
 local function rput(x2, y, s, fg, bg) put(x2 - #s + 1, y, s, fg, bg) end
-local function btn(x, y, s, fg, bg, fn)
-  put(x, y, s, fg, bg)
-  buttons[#buttons + 1] = { x, x + #s - 1, y, fn }
-  return x + #s
-end
 local function tabCol(on) return on and colours.black or colours.white, on and colours.lightBlue or colours.grey end
 local function header(x, y, w, title, right)
   put(x, y, (" " .. title .. (" "):rep(w)):sub(1, w), colours.black, colours.lightBlue)
@@ -309,18 +300,6 @@ local function state(e, r)
   if not r.have then return "...", colours.lightGrey end
   if r.have < e.keep then return "LOW", colours.orange end
   return "OK", colours.lime
-end
-
--- footer with paging; returns the index before the first row to show
-local function pager(n, per)
-  local pages = math.max(1, math.ceil(n / math.max(1, per)))
-  page = math.min(page, pages)
-  put(1, H, (" "):rep(W), nil, colours.grey)
-  btn(1, H, " < PREV ", colours.white, colours.grey, function() page = math.max(1, page - 1) end)
-  local s = page .. "/" .. pages
-  put(math.floor((W - #s) / 2) + 1, H, s, colours.white, colours.grey)
-  btn(W - 7, H, " NEXT > ", colours.white, colours.grey, function() page = math.min(pages, page + 1) end)
-  return (page - 1) * per
 end
 
 local function home(y0)
@@ -363,7 +342,7 @@ local function home(y0)
     rput(w, y, v[3], v[4])
     y = y + 1
   end
-  if #rows == 0 then put(2, y, total > 0 and "all stocked" or "no rules: ADD on the computer", colours.lightGrey) y = y + 1 end
+  if #rows == 0 then put(2, y, total > 0 and "all stocked" or "no rules yet", colours.lightGrey) y = y + 1 end
 
   local x, rw = 1, W
   if split then x, rw, y = w + 3, W - w - 2, y0 - gap end
@@ -381,48 +360,6 @@ local function home(y0)
   if #db.log == 0 then put(x + 1, y, "nothing yet", colours.lightGrey) end
 end
 
--- rule list; tap one to get its buttons on the two rows above the pager
-local function stock(y0)
-  if sel and not db.stock[sel] then sel = nil end
-  local ids = {}
-  for id in pairs(db.stock) do ids[#ids + 1] = id end
-  table.sort(ids, function(a, b) return (db.stock[a].label or a) < (db.stock[b].label or b) end)
-  local per = H - 2 - y0
-  local first = pager(#ids, per)
-  for i = 1, per do
-    local id = ids[first + i]
-    if not id then break end
-    local e, y = db.stock[id], y0 + i - 1
-    local _, col = state(e, rtOf(id))
-    local bg = id == sel and colours.grey or colours.black
-    btn(1, y, (" " .. (e.label or id) .. (" "):rep(W)):sub(1, W), e.off and colours.lightGrey or colours.white, bg,
-      function() sel = id ~= sel and id or nil end)
-    rput(W, y, " " .. fmt(rtOf(id).have) .. "/" .. fmt(e.keep), col, bg)
-  end
-  if #ids == 0 then put(2, y0 + 1, "no rules: ADD on the computer", colours.lightGrey) end
-
-  local e = sel and db.stock[sel]
-  if not e then return put(2, H - 2, "tap a rule to edit it", colours.lightGrey) end
-  local r = rtOf(sel)
-  local st, col = state(e, r)
-  local detail = (st == "MISSING" or st == "PREP") and r.missing and " " .. r.missing or "  keep " .. e.keep
-  put(2, H - 2, (st .. detail):sub(1, W - 2), col)
-  local y = H - 1
-  local x = btn(1, y, e.off and " OFF" or " ON ", colours.black, e.off and colours.lightGrey or colours.lime,
-    function() e.off = not e.off or nil save() end) + 1
-  -- LOOP = blocking (cyclical recipe, sized from the stock), BULK = whole deficit in one job
-  x = btn(x, y, e.blocking and " LOOP" or " BULK", colours.white, e.blocking and colours.purple or colours.grey,
-    function() e.blocking = not e.blocking or nil save() end) + 1
-  x = btn(x, y, " /2", colours.white, colours.grey, function() e.keep = math.floor(e.keep / 2) save() end) + 1
-  x = btn(x, y, " x2", colours.white, colours.grey, function() e.keep = math.max(1, e.keep * 2) save() end) + 1
-  -- two taps to delete: anyone walking past can reach the monitor
-  btn(x, y, confirm and "DEL?" or " DEL", colours.white, confirm and colours.red or colours.grey, function(armed)
-    if armed then db.stock[sel] = nil save() else confirm = true end
-  end)
-end
-
-local VIEWS = { HOME = home, STOCK = stock }
-
 local function draw()
   if not mon then return end
   local w, h = mon.getSize()
@@ -433,31 +370,26 @@ local function draw()
   win.setVisible(false)
   win.setBackgroundColour(colours.black)
   win.clear()
-  buttons = {}
   put(1, 1, (" "):rep(W), nil, colours.blue)
   put(2, 1, "BUTLER", colours.white, colours.blue)
   put(10, 1, online and "ME online" or "ME OFFLINE", online and colours.lime or colours.red, colours.blue)
   if synced ~= nil and W >= 50 then
     put(22, 1, synced and "rules " .. synced or "rules FETCH FAILED", synced and colours.lightGrey or colours.red, colours.blue)
   end
-  btn(W - 7, 1, db.paused and " PAUSED " or " ACTIVE ", colours.black, db.paused and colours.orange or colours.lime,
-    function() db.paused = not db.paused or nil save() end)
-  put(1, 2, (" "):rep(W), nil, colours.grey)
-  local x = 1
-  for _, t in ipairs(TABS) do
-    local fg, bg = tabCol(tab == t)
-    x = btn(x, 2, " " .. t .. " ", fg, bg, function() tab, page = t, 1 end)
-  end
-  VIEWS[tab](3)
+  rput(W - 1, 1, db.paused and "PAUSED" or "ACTIVE", colours.black, db.paused and colours.orange or colours.lime)
+  home(2)
   win.setVisible(true)
 end
 
 -- ---- computer screen ----
 local pick = {}                       -- craftable items: { id, label, key (lowercase haystack) }
-local query, found, cur, top = "", {}, 1, 0 -- ADD: search text, matches, highlighted one, rows scrolled
-local asking                          -- picked item, now typing its keep: { id, label, text }
-local note                            -- last thing that happened on ADD
-local LIST_Y = 5                      -- first result row
+local query, found, cur, top = "", {}, 1, 0 -- MANAGE: search text, matches, highlighted one, rows scrolled
+local asking                          -- rule being given a keep count: { id, label, text }
+local note                            -- last thing that happened
+local scur, stop, armed = 1, 0, false -- STOCK: highlighted rule, rows scrolled, Del pressed once
+local LIST_Y = 5                      -- MANAGE: first result row
+local TABS = { "LOG", "STOCK", "MANAGE" }
+local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "LOG" }
 
 local function tput(x, y, s, fg, bg)
   term.setCursorPos(x, y)
@@ -466,16 +398,67 @@ local function tput(x, y, s, fg, bg)
   term.write(s)
 end
 
+local function stockIds()
+  local ids = {}
+  for id in pairs(db.stock) do ids[#ids + 1] = id end
+  table.sort(ids, function(a, b) return (db.stock[a].label or a) < (db.stock[b].label or b) end)
+  return ids
+end
+
+local function drawStock()
+  local ids = stockIds()
+  scur = math.max(1, math.min(#ids, scur))
+  local per = TH - 3
+  if scur <= stop then stop = scur - 1 end
+  if scur > stop + per then stop = scur - per end
+  for i = 1, per do
+    local id = ids[stop + i]
+    if not id then break end
+    local e, r = db.stock[id], rtOf(id)
+    local st, col = state(e, r)
+    local bg = stop + i == scur and colours.grey or colours.black
+    local right = (e.blocking and "LOOP " or "") .. fmt(r.have) .. "/" .. fmt(e.keep) .. " " .. st
+    local w = TW - #right - 1
+    tput(1, 1 + i, ((stop + i == scur and "> " or "  ") .. (e.label or id) .. (" "):rep(TW)):sub(1, w + 1),
+      e.off and colours.lightGrey or colours.white, bg)
+    tput(w + 2, 1 + i, right, col, bg)
+  end
+  if #ids == 0 then tput(1, 2, "no rules yet: MANAGE tab", colours.lightGrey) end
+  local id = ids[scur]
+  if asking then
+    local prompt = "Keep " .. asking.label .. ": "
+    tput(1, TH - 1, prompt:sub(1, TW), colours.yellow)
+    tput(#prompt + 1, TH - 1, asking.text)
+    term.setCursorPos(math.min(TW, #prompt + #asking.text + 1), TH - 1)
+    term.setTextColour(colours.white)
+    term.setCursorBlink(true)
+  elseif id then
+    local e, r = db.stock[id], rtOf(id)
+    local st, col = state(e, r)
+    local line, c = st .. "  keep " .. e.keep, col
+    if (st == "MISSING" or st == "PREP") and r.missing then line = st .. " " .. r.missing end
+    if armed then line, c = "Del again deletes it, any other key cancels", colours.red end
+    tput(1, TH - 1, line:sub(1, TW), c)
+  end
+  tput(1, TH, ("Enter keep  O on/off  L loop  Del  P pause"):sub(1, TW), colours.lightGrey)
+end
+
 function drawTerm()
   term.setBackgroundColour(colours.black)
   term.clear()
   term.setCursorBlink(false)
   tput(1, 1, (" "):rep(TW), nil, colours.grey)
-  local fg, bg = tabCol(view == "LOG")
-  tput(1, 1, " LOG ", fg, bg)
-  fg, bg = tabCol(view == "ADD")
-  tput(6, 1, " ADD ", fg, bg)
-  tput(TW - 16, 1, "Tab switches tab", colours.lightGrey, colours.grey)
+  local x = 1
+  for _, v in ipairs(TABS) do
+    local fg, bg = tabCol(view == v)
+    tput(x, 1, " " .. v .. " ", fg, bg)
+    x = x + #v + 2
+  end
+  if db.paused then
+    tput(TW - 17, 1, "PAUSED (P resumes)", colours.black, colours.orange)
+  else
+    tput(TW - 15, 1, "Tab switches tab", colours.lightGrey, colours.grey)
+  end
   if view == "LOG" then
     local first = math.max(0, #lines - (TH - 1))
     for i = 1, TH - 1 do
@@ -483,6 +466,7 @@ function drawTerm()
     end
     return
   end
+  if view == "STOCK" then return drawStock() end
   local prompt, text = "Search: ", query
   if asking then
     prompt, text = "Keep at least: ", asking.text
@@ -529,7 +513,7 @@ end
 
 local function loadPick()
   pick = {}
-  -- ponytail: dumps every pattern, but only when ADD is opened, never on a timer (full dumps every pass
+  -- ponytail: dumps every pattern, but only when MANAGE is opened, never on a timer (full dumps every pass
   -- stalled the server on RS).
   local ok, list = pcall(bridge.getCraftableItems)
   local seen = {}
@@ -544,24 +528,36 @@ local function loadPick()
 end
 
 local function openView(v)
-  view, asking, note = v, nil, nil
-  if v == "ADD" then
+  view, asking, note, armed = v, nil, nil, false
+  if v == "MANAGE" then
     loadPick()
     search()
     if #pick == 0 then note = "no patterns found (bridge offline?)" end
   end
 end
 
+local function pageRows() return view == "STOCK" and TH - 3 or TH - LIST_Y end
+
 local function move(d)
-  local rows = TH - LIST_Y
-  cur = math.max(1, math.min(#found, cur + d))
-  if cur <= top then top = cur - 1 end
-  if cur > top + rows then top = cur - rows end
+  if view == "STOCK" then
+    scur = math.max(1, math.min(#stockIds(), scur + d))
+    if scur <= stop then stop = scur - 1 end
+    if scur > stop + pageRows() then stop = scur - pageRows() end
+  else
+    cur = math.max(1, math.min(#found, cur + d))
+    if cur <= top then top = cur - 1 end
+    if cur > top + pageRows() then top = cur - pageRows() end
+  end
 end
 
 local function choose(p)
   if not p then return end
   asking, note = { id = p.id, label = p.label, text = tostring(db.stock[p.id] and db.stock[p.id].keep or 64) }, nil
+end
+
+local function editRule()
+  local id = stockIds()[scur]
+  if id then asking = { id = id, label = db.stock[id].label or id, text = tostring(db.stock[id].keep) } end
 end
 
 local function saveKeep()
@@ -570,7 +566,6 @@ local function saveKeep()
   local e = db.stock[asking.id] or { label = asking.label }
   e.keep = math.floor(n)
   db.stock[asking.id] = e
-  sel = asking.id -- so STOCK on the monitor has it ready to edit
   save()
   note = asking.label .. ": keep " .. e.keep
   asking, query = nil, ""
@@ -578,11 +573,29 @@ local function saveKeep()
   os.queueEvent("butler_poke")
 end
 
+-- STOCK single-key commands act on the highlighted rule
+local function ruleKey(ch)
+  if ch == "p" then
+    db.paused = not db.paused or nil
+    save()
+    return
+  end
+  local id = stockIds()[scur]
+  local e = id and db.stock[id]
+  if not e then return end
+  if ch == "o" then e.off = not e.off or nil
+  elseif ch == "l" then e.blocking = not e.blocking or nil
+  else return end
+  save()
+end
+
 local function typed(s)
-  if view ~= "ADD" then return end
   if asking then
     asking.text = asking.text .. s:gsub("%D", "")
-  else
+  elseif view == "STOCK" then
+    armed = false
+    ruleKey(s:lower())
+  elseif view == "MANAGE" then
     query = query .. s
     search()
   end
@@ -590,26 +603,49 @@ end
 
 local function pressed(k)
   if k == keys.tab then
-    if asking then asking = nil else openView(view == "LOG" and "ADD" or "LOG") end
-  elseif view ~= "ADD" then
+    armed = false
+    if asking then asking = nil else openView(NEXT[view]) end
     return
-  elseif k == keys.backspace then
-    if asking then asking.text = asking.text:sub(1, -2) else query = query:sub(1, -2) search() end
-  elseif k == keys.enter or k == keys.numPadEnter then
-    if asking then saveKeep() else choose(found[cur]) end
-  elseif k == keys.up then move(-1)
+  end
+  if view == "LOG" then return end
+  if asking then
+    if k == keys.backspace then asking.text = asking.text:sub(1, -2)
+    elseif k == keys.enter or k == keys.numPadEnter then saveKeep() end
+    return
+  end
+  local wasArmed = armed
+  armed = false
+  if k == keys.up then move(-1)
   elseif k == keys.down then move(1)
-  elseif k == keys.pageUp then move(LIST_Y - TH)
-  elseif k == keys.pageDown then move(TH - LIST_Y)
+  elseif k == keys.pageUp then move(-pageRows())
+  elseif k == keys.pageDown then move(pageRows())
+  elseif k == keys.enter or k == keys.numPadEnter then
+    if view == "MANAGE" then choose(found[cur]) else editRule() end
+  elseif view == "MANAGE" and k == keys.backspace then
+    query = query:sub(1, -2)
+    search()
+  elseif view == "STOCK" and k == keys.delete then
+    local id = stockIds()[scur]
+    if id and wasArmed then db.stock[id], armed = nil, false save() elseif id then armed = true end
   end
 end
 
 local function clicked(x, y)
-  if y == 1 and x <= 10 then
-    openView(x <= 5 and "LOG" or "ADD")
-  elseif view == "ADD" and not asking and y >= LIST_Y and found[top + y - LIST_Y + 1] then
+  if y == 1 then
+    local at = 1
+    for _, v in ipairs(TABS) do
+      if x >= at and x < at + #v + 2 then return openView(v) end
+      at = at + #v + 2
+    end
+  elseif asking then
+    return
+  elseif view == "MANAGE" and y >= LIST_Y and found[top + y - LIST_Y + 1] then
     cur = top + y - LIST_Y + 1
     choose(found[cur])
+  elseif view == "STOCK" and y >= 2 and y <= TH - 2 and stockIds()[stop + y - 1] then
+    local i = stop + y - 1
+    armed = false
+    if i == scur then editRule() else scur = i end
   end
 end
 
@@ -681,23 +717,16 @@ end
 local function uiLoop()
   while true do
     local ev, a, b, c = os.pullEvent()
-    if ev == "monitor_touch" then
-      local armed = confirm
-      confirm = nil
-      for _, hit in ipairs(buttons) do
-        if c == hit[3] and b >= hit[1] and b <= hit[2] then hit[4](armed) break end
-      end
-      draw()
-    elseif ev == "monitor_resize" then
+    if ev == "monitor_resize" then
       draw()
     elseif ev == "char" or ev == "paste" or ev == "key" or ev == "mouse_click" or ev == "mouse_scroll" or ev == "term_resize" then
       if ev == "key" then pressed(a)
       elseif ev == "mouse_click" then clicked(b, c)
-      elseif ev == "mouse_scroll" then if view == "ADD" and not asking then move(a * 3) end
+      elseif ev == "mouse_scroll" then if view ~= "LOG" and not asking then move(a * 3) end
       elseif ev == "term_resize" then TW, TH = term.getSize()
       else typed(a) end
       drawTerm()
-      draw() -- a rule may have been added
+      draw() -- a rule may have changed
     end
   end
 end
