@@ -44,8 +44,8 @@
       },
       {
         "key": "ScanEvery",
-        "prompt": "Seconds between full item/fluid/cell scans (0 = off)",
-        "default": "30"
+        "prompt": "Seconds between full item/fluid/cell scans (0 = off, big networks stall the server)",
+        "default": "0"
       },
       {
         "key": "View",

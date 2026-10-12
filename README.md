@@ -35,8 +35,11 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 `cookienet get ME_Monitor --boot` on every computer that has an advanced monitor; all of them need a modem.
 The computer with the ME Bridge is the main: it polls and broadcasts (rednet `me_monitor`). The others just draw.
 `View` auto shows fill gauges on a short strip and the full dashboard on a big monitor; force one with
-`cookienet config View=dashboard` (or `gauges`). `ScanEvery=0` on the main turns off the item/fluid scan.
-The activity feed lists what changed between two scans, so a lower `ScanEvery` makes it livelier (and costs the server more).
+`cookienet config View=dashboard` (or `gauges`).
+The top items/fluids lists and the activity feed need a full item scan, which runs on the server thread and can stall a
+big network for minutes (it crashed the server once). So it is off by default: `cookienet config ScanEvery=300` turns it on.
+Scans slow themselves down (about 1% of server time), and one that takes over 3 s switches the scan off for good by
+writing `/.me_monitor_scan_off`; delete that file to try again.
 Right-click a dashboard monitor for the next page.
 
 ## Butler (ME system manager)

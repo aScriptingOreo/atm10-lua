@@ -6,14 +6,22 @@
 -- @deps cn_lib
 -- @config TextScale|Monitor text scale (0.5 = most data)|0.5
 -- @config Poll|Seconds between refreshes|2
--- @config ScanEvery|Seconds between full item/fluid/cell scans (0 = off)|30
+-- @config ScanEvery|Seconds between full item/fluid/cell scans (0 = off, big networks stall the server)|0
 -- @config View|What this computer's monitor shows (auto/dashboard/gauges)|auto
 local cfg = dofile("/lib/cn.lua")
 local SCALE = tonumber(cfg.TextScale) or 0.5
 local POLL = tonumber(cfg.Poll) or 2
--- ponytail: getItems dumps the whole network (every pass of that crashed the server on RS).
--- Kept on a slow timer; raise ScanEvery or set 0 if the server stalls on a huge network.
-local SCAN_EVERY = tonumber(cfg.ScanEvery) or 30
+-- getItems dumps the whole network on the SERVER thread (it converts every stack and its tags), so on a
+-- big network one call can hold a tick for minutes: it killed the server twice (RS, then AE2: a 60 s
+-- watchdog crash with getItems on the main thread). So the scan is opt-in (ScanEvery > 0), throttled by
+-- how long the last one took, and switched off for good by one that was too slow.
+local SCAN_EVERY = tonumber(cfg.ScanEvery) or 0
+local SCAN_OFF = "/.me_monitor_scan_off" -- exists = a scan was too slow; delete it to try again
+local MAX_SCAN_MS = 3000
+local scanOff = fs.exists(SCAN_OFF)
+-- seconds until the next scan: scans may cost about 1% of server time
+local function scanDelay(every, ms) return math.max(every, ms / 10) end
+assert(scanDelay(30, 100) == 30 and scanDelay(30, 2000) == 200)
 
 local VIEW = cfg.View or "auto"
 -- ponytail: one fixed protocol; add a name to it (like reactor:<name>) if two ME setups share modem range
@@ -311,7 +319,7 @@ local function draw()
     left = left - rows[i] - 2
   end
   for i, l in ipairs(lists) do y = ranked(x, y, w, rows[i], l[1], l[2], l[3]) end
-  if #lists == 0 and two then put(x, y, SCAN_EVERY > 0 and "scanning..." or "item scan off (ScanEvery=0)", colours.grey) end
+  if #lists == 0 and two then put(x, y, scan.off and "item scan switched off: too slow" or SCAN_EVERY > 0 and "scanning..." or "item scan off (ScanEvery=0)", colours.grey) end
   pages = math.max(1, math.ceil((math.max(bottom, y) - 4) / (H - 2)))
 
   top, oy = 1, 0
@@ -392,16 +400,27 @@ local function update()
       c.craftingJob = { quantity = job.quantity, completion = job.completion, resource = { displayName = res.displayName or res.name } }
     end
   end
-  if SCAN_EVERY > 0 and os.clock() >= nextScan then
+  if SCAN_EVERY > 0 and not scanOff and os.clock() >= nextScan then
+    local t0 = os.epoch("utc")
     local raw = poll(SLOW)
+    local ms = os.epoch("utc") - t0
+    nextScan = os.clock() + scanDelay(SCAN_EVERY, ms)
+    if ms > MAX_SCAN_MS then
+      scanOff = true
+      local f = fs.open(SCAN_OFF, "w")
+      f.write(("scan took %d ms"):format(ms))
+      f.close()
+      print(("item scan took %.1f s, switched off. Delete %s to retry."):format(ms / 1000, SCAN_OFF))
+      raw = { getCells = raw.getCells, getDrives = raw.getDrives } -- the small ones are fine
+    end
     scan = {
       items = rank("items", raw.getItems, 1, ""),
       fluids = rank("fluids", raw.getFluids, 1000, " B"), -- mB -> buckets
       chemicals = rank("chemicals", raw.getChemicals, 1000, " B"),
       feed = feed,
       cells = cellSummary(raw.getCells, raw.getDrives),
+      off = scanOff,
     }
-    nextScan = os.clock() + SCAN_EVERY
   end
   if modem then rednet.broadcast({ s = s, scan = scan }, PROTO) end
 end
