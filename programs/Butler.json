@@ -1,0 +1,10 @@
+{
+  "stock": {
+    "minecraft:netherite_upgrade_smithing_template": { "keep": 64, "blocking": true },
+    "allthemodium:allthemodium_upgrade_smithing_template": { "keep": 64, "blocking": true },
+    "allthemodium:vibranium_upgrade_smithing_template": { "keep": 64, "blocking": true },
+    "allthemodium:unobtainium_upgrade_smithing_template": { "keep": 64, "blocking": true },
+    "extendedae:entro_crystal": { "keep": 16384, "batch": 1024 }
+  },
+  "trash": {}
+}

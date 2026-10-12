@@ -1,14 +1,20 @@
 -- Butler: ME system manager. Computer next to an ME Bridge, advanced monitor on any side (optional).
 -- STOCK autocrafts anything below its keep count, TRASH exports anything above its keep count out TrashDir.
 -- Set up by touching the monitor: ADD picks from the network, STOCK/TRASH edit the rules, HOME is the dashboard.
+-- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
 -- @desc ME system manager: keeps items stocked (autocraft), trashes overflow, touch dashboard on a monitor
 -- @deps cn_lib
 -- @config TrashDir|Bridge side facing the trash|down
 -- @config Poll|Seconds between stock checks|10
 -- @config TextScale|Monitor text scale|0.5
+-- @config Sync|Seconds between re-fetching Butler.json from the repo (0 = off)|60
 local cfg = dofile("/lib/cn.lua")
 local POLL = tonumber(cfg.Poll) or 10
 local SCALE = tonumber(cfg.TextScale) or 0.5
+local SYNC = tonumber(cfg.Sync) or 60
+-- ponytail: raw /main/ is CDN-cached for minutes, so a push takes up to ~5 min to land.
+-- Resolve the commit sha first (like cookienet does) if that ever matters.
+local RULES_URL = "https://raw.githubusercontent.com/aScriptingOreo/atm10-lua/main/programs/Butler.json"
 local TRASH_DIR = cfg.TrashDir or "down"
 -- AP 0.8 target: "@<direction>" = side of the bridge, anything else = peripheral name on the network
 local DIRS = { up = 1, down = 1, north = 1, south = 1, east = 1, west = 1, front = 1, back = 1, left = 1, right = 1, top = 1, bottom = 1 }
@@ -33,8 +39,9 @@ local COLOUR = {
 -- ---- state ----
 -- { paused, stock = { ["item:id"] = { keep, batch, blocking, off, label } }, trash = { same }, log = { newest first } }
 -- stock keep = min count in ME, batch = max per craft request (AE2 refuses a job it can't fully afford).
--- blocking = one at a time, each job waits for the last: for cyclical recipes that eat their own output
--- (1 smithing template -> 2), which AE2 can't plan in bulk. Not blocking = the whole deficit in one job.
+-- blocking = one job at a time, sized to what the stock can feed: for cyclical recipes that eat their own
+-- output (1 smithing template -> 2), which AE2 can't plan past what is in storage. See want().
+-- seed = the repo rules as last seen, so a re-fetch only overrides a rule when the repo changed it.
 -- trash keep = max count in ME. Hand edits are fine while Butler is stopped; "item:id": 256 is shorthand.
 local db = {}
 do
@@ -43,7 +50,8 @@ do
     db = textutils.unserialiseJSON(f.readAll()) or error("bad json in " .. DB, 0)
     f.close()
   end
-  for _, k in ipairs({ "stock", "trash", "log" }) do db[k] = db[k] or {} end
+  for _, k in ipairs({ "stock", "trash", "log", "seed" }) do db[k] = db[k] or {} end
+  db.seed.stock, db.seed.trash = db.seed.stock or {}, db.seed.trash or {}
   for _, k in ipairs({ "stock", "trash" }) do
     for id, e in pairs(db[k]) do
       if type(e) ~= "table" then e = { keep = e } end
@@ -63,15 +71,17 @@ local function save()
   dirty = false
 end
 
--- runtime per rule: have, st (status text, nil = nothing to say), wait (no new craft before this clock)
+-- runtime per rule: have, st (status text, nil = nothing to say), wait (no new craft before this clock),
+-- cap (blocking: request ceiling after a failed job)
 local rt = { stock = {}, trash = {} }
 local function rtOf(kind, id)
   local r = rt[kind][id] or {}
   rt[kind][id] = r
   return r
 end
-local jobs = {} -- AP craft job id -> { r = runtime, entry = log entry }
+local jobs = {} -- AP craft job id -> { r = runtime, entry = log entry, n = requested, net = stock gained, cyclic }
 local cpus, online = {}, false
+local synced -- "HH:MM" of the last good rules fetch, false = last one failed
 
 local function fmt(n)
   if not n then return "?" end
@@ -83,10 +93,19 @@ assert(fmt(999) == "999" and fmt(1500) == "1.50K")
 
 local function clean(s) return (tostring(s):gsub("^%[(.*)%]$", "%1")) end -- AP wraps display names in []
 
-local function need(have, keep, batch)
-  return math.min(math.max(keep - have, 0), batch or math.huge)
+-- how many to request for rule e
+local function want(have, e, cap)
+  local short = math.max(e.keep - have, 0)
+  if not e.blocking then return math.min(short, e.batch or math.huge) end
+  if short == 0 then return 0 end
+  -- 1 in -> 2 out: a job can run at most `have` crafts (it eats the stock it starts with) and each craft
+  -- nets +1. Asking for 2 per craft doubles the stock every job (2 -> 4 -> 8 ...) instead of +1 a job.
+  return math.max(1, math.min(2 * short, 2 * have, cap or math.huge))
 end
-assert(need(10, 64) == 54 and need(64, 64) == 0 and need(0, 1000, 256) == 256)
+assert(want(10, { keep = 64 }) == 54 and want(64, { keep = 64 }) == 0 and want(0, { keep = 1000, batch = 256 }) == 256)
+assert(want(2, { keep = 1000, blocking = true }) == 4 and want(512, { keep = 1000, blocking = true }) == 976)
+assert(want(63, { keep = 64, blocking = true }) == 2 and want(0, { keep = 64, blocking = true }) == 1)
+assert(want(100, { keep = 1000, blocking = true }, 50) == 50 and want(64, { keep = 64, blocking = true }) == 0)
 
 -- One line per item and kind: a new entry replaces the item's last finished one and carries its total
 -- (made = crafted or trashed so far), so the log shows what happened lately, not one line forty times.
@@ -118,7 +137,7 @@ end
 local function checkStock(id, e)
   local r = rtOf("stock", id)
   if not count(id, r, e) then return end
-  local n = need(r.have, e.keep, e.blocking and 1 or e.batch)
+  local n = want(r.have, e, r.cap)
   if n == 0 or e.off or db.paused then r.st = nil return end
   local _, busy = pcall(bridge.isCrafting, { name = id })
   if busy == true then r.st = "CRAFTING" return end
@@ -133,7 +152,8 @@ local function checkStock(id, e)
   print(entry.t, e.label or id, "x" .. n, entry.st)
   if job then
     local ok, jid = pcall(job.getId)
-    if ok then jobs[jid] = { r = r, entry = entry } end
+    -- blocking jobs eat half of what they make: count the net gain, and let a failure halve the next ask
+    if ok then jobs[jid] = { r = r, entry = entry, n = n, net = e.blocking and math.ceil(n / 2) or n, cyclic = e.blocking } end
   end
 end
 
@@ -161,6 +181,31 @@ local function checkTrash(id, e)
   elseif errs then
     r.st = tostring(errs) -- no trash on that side, trash full, ...
   end
+end
+
+-- Repo rules win only when the repo changed them: a new or edited rule is applied, a removed one is deleted,
+-- an untouched one keeps whatever the monitor did to it. Returns true if anything changed.
+local function applyRules(remote)
+  local changed = false
+  for _, kind in ipairs({ "stock", "trash" }) do
+    local list, seen = type(remote[kind]) == "table" and remote[kind] or {}, db.seed[kind]
+    for id, rule in pairs(list) do
+      if type(rule) ~= "table" then rule = { keep = rule } end
+      local sig = table.concat({ tostring(rule.keep), tostring(rule.batch), tostring(rule.blocking), tostring(rule.off) }, "|")
+      if seen[id] ~= sig and tonumber(rule.keep) then
+        seen[id] = sig
+        db[kind][id] = {
+          keep = tonumber(rule.keep), batch = tonumber(rule.batch), blocking = rule.blocking or nil,
+          off = rule.off or nil, label = db[kind][id] and db[kind][id].label,
+        }
+        changed = true
+      end
+    end
+    for id in pairs(seen) do
+      if list[id] == nil then seen[id], db[kind][id], changed = nil, nil, true end
+    end
+  end
+  return changed
 end
 
 -- ---- drawing (into an invisible window, flipped once per frame: no flicker) ----
@@ -244,7 +289,7 @@ local function home(y0)
   local last = split and H or y + 5
   for _, v in ipairs(rows) do
     if y > last then break end
-    put(2, y, v[1]:sub(1, math.max(0, w - 28)))
+    put(2, y, v[1]:sub(1, math.max(0, w - 16 - #v[2])))
     rput(w - 14, y, v[2], colours.lightGrey)
     rput(w, y, v[3]:sub(1, 13), v[4])
     y = y + 1
@@ -271,7 +316,7 @@ local function rules(kind)
     local ids = {}
     for id in pairs(db[kind]) do ids[#ids + 1] = id end
     table.sort(ids, function(a, b) return (db[kind][a].label or a) < (db[kind][b].label or b) end)
-    put(2, y0, kind == "stock" and "autocraft while below keep  (1x1 = blocking, one job at a time)" or "trash what is above keep  -> " .. TARGET, colours.lightGrey)
+    put(2, y0, kind == "stock" and "autocraft while below keep  (LOOP = recipe eats its own output)" or "trash what is above keep  -> " .. TARGET, colours.lightGrey)
     local per = H - 1 - y0
     local first = pager(#ids, per)
     for i = 1, per do
@@ -289,11 +334,11 @@ local function rules(kind)
         function(armed) if armed == key then db[kind][id] = nil save() else confirm = key end end)
       if kind == "stock" then
         x = x - 6
-        btn(x, y, e.blocking and " 1x1 " or " BULK", colours.white, e.blocking and colours.purple or colours.grey,
+        btn(x, y, e.blocking and " LOOP" or " BULK", colours.white, e.blocking and colours.purple or colours.grey,
           function() e.blocking = not e.blocking or nil save() end)
       end
       rput(x - 2, y, fmt(r.have) .. "/" .. fmt(e.keep), col)
-      local nameEnd = x - 14 -- count column is 11 wide
+      local nameEnd = x - 17 -- count column: up to 13 wide (12.34K/56.78K)
       if nameEnd >= 40 then
         rput(nameEnd, y, st:sub(1, 13), col)
         nameEnd = nameEnd - 14
@@ -372,6 +417,9 @@ local function draw()
   put(1, 1, (" "):rep(W), nil, colours.blue)
   put(2, 1, "BUTLER", colours.white, colours.blue)
   put(10, 1, online and "ME online" or "ME OFFLINE", online and colours.lime or colours.red, colours.blue)
+  if synced ~= nil and W >= 45 then
+    put(22, 1, synced and "rules " .. synced or "rules FETCH FAILED", synced and colours.lightGrey or colours.red, colours.blue)
+  end
   btn(W - 7, 1, db.paused and " PAUSED " or " ACTIVE ", colours.black, db.paused and colours.orange or colours.lime,
     function() db.paused = not db.paused or nil save() end)
   put(1, 2, (" "):rep(W), nil, colours.grey)
@@ -423,7 +471,14 @@ local function jobLoop()
     if j then
       local st = EVENT[status] or tostring(status)
       j.entry.st = st
-      if st == "DONE" then j.entry.made = (j.entry.made or 0) + j.entry.n end
+      if st == "DONE" then
+        j.entry.made = (j.entry.made or 0) + j.net
+        if j.r.cap then j.r.cap = j.r.cap * 2 end -- it fit: grow back
+      elseif j.cyclic and j.n > 1 and st ~= "CANCELED" and not LIVE[st] then
+        -- too big for the other ingredients (diamonds ran out before templates did): try half, now
+        j.r.cap, j.r.wait = math.floor(j.n / 2), nil
+        os.queueEvent("butler_poke")
+      end
       j.r.st = st ~= "DONE" and st or nil
       if not LIVE[st] then
         jobs[jid] = nil
@@ -434,6 +489,25 @@ local function jobLoop()
       dirty = true
       draw()
     end
+  end
+end
+
+local function syncLoop()
+  while true do
+    local r = http.get(RULES_URL .. "?t=" .. os.epoch("utc"))
+    local remote = r and textutils.unserialiseJSON(r.readAll())
+    if r then r.close() end
+    if type(remote) == "table" then
+      synced = os.date("%H:%M")
+      if applyRules(remote) then
+        save()
+        os.queueEvent("butler_poke")
+      end
+    else
+      synced = false -- github down or bad json pushed: keep running on what we have
+    end
+    draw()
+    sleep(SYNC)
   end
 end
 
@@ -455,4 +529,6 @@ end
 
 print("butler: trash -> " .. TARGET .. (mon and "" or ", no monitor (headless)"))
 draw()
-parallel.waitForAny(stockLoop, fastLoop, jobLoop, uiLoop)
+local loops = { stockLoop, fastLoop, jobLoop, uiLoop }
+if SYNC > 0 then loops[#loops + 1] = syncLoop end
+parallel.waitForAny(table.unpack(loops))

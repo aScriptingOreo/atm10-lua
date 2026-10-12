@@ -42,26 +42,36 @@ Right-click a dashboard monitor for the next page.
 ## Butler (ME system manager)
 
 `cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (3x2 blocks or bigger;
-any sides). Everything is set up by right-clicking the monitor:
+any sides). Right-click the monitor:
 
 - **HOME**: busy crafting CPUs, stock rules that are not satisfied, and what Butler crafted / trashed lately.
-- **STOCK**: autocraft an item while it is below `keep`. `/2` `x2` change keep, `BULK`/`1x1` switches blocking.
-- **TRASH**: export what is above `keep` out the bridge side `TrashDir`. New rules start `OFF` at the current count.
+- **STOCK**: autocraft an item while it is below `keep`. `/2` `x2` change keep, `BULK`/`LOOP` switches blocking.
+- **TRASH**: export what is above `keep` out the bridge side `TrashDir`. Rules added here start `OFF` at the current count.
 - **ADD**: pick from craftable items (-> stock) or stored items (-> trash), filtered by first letter.
 - `ACTIVE`/`PAUSED` in the title bar stops all crafting and trashing.
 
-Rules and the log live in `/butler.json` on the computer (not in this repo, updates never touch it). Stop Butler
-before editing it by hand:
+Rules come from two places:
+
+- `programs/Butler.json` in this repo. Butler re-fetches it every `Sync` seconds (default 60; GitHub caches the
+  file, so a push lands within about 5 minutes). No reboot. The title bar shows the last good fetch.
+- The monitor. Edits are kept in `/butler.json` on the computer, with the log.
+
+The repo only overrides a rule when the repo changed it: a new or edited rule is applied, a rule removed from the
+file is deleted, and an untouched one keeps whatever was done to it on the monitor.
 
 ```json
 { "stock": { "minecraft:glass": 256,
-             "ae2:fluix_crystal": { "keep": 1024, "batch": 256 },
-             "minecraft:netherite_upgrade_smithing_template": { "keep": 16, "blocking": true } },
+             "extendedae:entro_crystal": { "keep": 16384, "batch": 1024 },
+             "minecraft:netherite_upgrade_smithing_template": { "keep": 64, "blocking": true } },
   "trash": { "minecraft:rotten_flesh": 0 } }
 ```
 
-`blocking` crafts one at a time, each job waiting for the last: use it for cyclical recipes that consume their own
-output (1 template -> 2), which AE2 cannot plan in bulk. `batch` caps one request for everything else.
+- `keep`: stock = minimum, trash = maximum. A bare number is shorthand for `{ "keep": N }`.
+- `batch`: most to request in one job. AE2 refuses a whole job it cannot afford, so cap big targets.
+- `blocking`: for recipes that eat their own output (1 template -> 2). A job can only run as many crafts as there
+  are items in storage, so Butler doubles: 2 -> 4 -> 8 ... one job at a time. If a job is refused (the other
+  ingredients ran out first) it retries with half. Needs at least 1 in the network to start.
+- `off`: rule exists but does nothing.
 
 ## Adding a package
 

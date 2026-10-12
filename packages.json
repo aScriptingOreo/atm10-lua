@@ -19,6 +19,11 @@
         "key": "TextScale",
         "prompt": "Monitor text scale",
         "default": "0.5"
+      },
+      {
+        "key": "Sync",
+        "prompt": "Seconds between re-fetching Butler.json from the repo (0 = off)",
+        "default": "60"
       }
     ],
     "files": [
