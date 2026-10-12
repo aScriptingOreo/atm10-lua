@@ -1,6 +1,6 @@
 {
   "Butler": {
-    "desc": "ME system manager: keeps items stocked (autocraft), touch dashboard on a monitor",
+    "desc": "ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor",
     "deps": [
       "cn_lib"
     ],

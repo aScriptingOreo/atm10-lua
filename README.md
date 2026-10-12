@@ -42,38 +42,60 @@ Right-click a dashboard monitor for the next page.
 ## Butler (ME system manager)
 
 `cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (any sides, 3x2 blocks
-or bigger). It autocrafts every item that is below its `keep` count. Right-click the monitor:
+or bigger). It autocrafts every item that is below its `keep` count.
+
+On the computer (Tab or a click switches tab):
+
+- **LOG**: one line each time a rule changes state.
+- **ADD**: type to search the craftable items ("unob temp" finds the Unobtainium template). Click a result, or
+  arrows + Enter, then type how many to keep and press Enter. Picking an item that already has a rule edits it.
+
+On the monitor (right-click):
 
 - **HOME**: busy crafting CPUs, rules that are not satisfied, and what Butler crafted lately.
-- **STOCK**: the rules. Tap one for its buttons: `ON`/`OFF`, `BULK`/`LOOP` (blocking), `/2` `x2` (keep), `DEL`.
+- **STOCK**: the rules. Tap one for its buttons: `ON`/`OFF`, `BULK`/`LOOP`, `/2` `x2` (keep), `DEL`.
   A refused craft shows what it was missing.
-- **ADD**: tap a craftable item to add a rule (keep 64). The letters filter by first letter.
 - `ACTIVE`/`PAUSED` in the title bar stops all crafting.
 
-Text size: `cookienet config TextScale=1` (0.5 to 5 in steps of 0.5), then reboot the computer.
-The terminal only prints when a rule changes state.
+Monitor text size: `cookienet config TextScale=1` (0.5 to 5 in steps of 0.5), then reboot the computer.
+
+### Rules
 
 Rules come from two places:
 
 - `programs/Butler.json` in this repo. Butler re-fetches it every `Sync` seconds (default 60; GitHub caches the
   file, so a push lands within about 5 minutes). No reboot. On a wide monitor the title bar shows the last fetch.
-- The monitor. Edits are kept in `/butler.json` on the computer, with the log.
+- The computer and the monitor. Edits are kept in `/butler.json` on the computer, with the log.
 
 The repo only overrides a rule when the repo changed it: a new or edited rule is applied, a rule removed from the
-file is deleted, and an untouched one keeps whatever was done to it on the monitor.
+file is deleted, and an untouched one keeps whatever was done to it in game.
 
 ```json
 { "stock": { "minecraft:glass": 256,
-             "extendedae:entro_crystal": { "keep": 16384, "batch": 1024 },
-             "minecraft:netherite_upgrade_smithing_template": { "keep": 64, "blocking": true } } }
+             "ae2:fluix_crystal": { "keep": 4096, "batch": 512 },
+             "extendedae:entro_crystal": { "keep": 16384, "blocking": true } } }
 ```
 
 - `keep`: minimum count in the network. A bare number is shorthand for `{ "keep": N }`.
-- `batch`: most to request in one job. AE2 refuses a whole job it cannot afford, so cap big targets.
-- `blocking`: for recipes that eat their own output (1 template -> 2). A job can only run as many crafts as there
-  are items in storage, so Butler doubles: 2 -> 4 -> 8 ... one job at a time. If a job is refused (the other
-  ingredients ran out first) it retries with half. Needs at least 1 in the network to start.
+- `batch`: most to request in one job.
+- `blocking` (`LOOP` on the monitor): the recipe is a cycle, its ingredients are made from the item itself.
+  Requests are sized from the current stock, at most double it per job.
 - `off`: rule exists but does nothing.
+
+### What happens when AE2 refuses a job
+
+AE2 plans all or nothing, and it never uses stored copies of the item being requested as an ingredient.
+So when a job comes back with missing items, Butler:
+
+1. crafts the missing ingredient first if it has a pattern (status `PREP`), then asks for the item again. This is
+   what makes a cycle work: asking for crystals fails on "missing dust" however many crystals are stored, but
+   asking for the dust is a different job that is allowed to crush the crystals;
+2. halves whatever still does not fit (N/2, N/4, ...) until a job is accepted, and doubles back up after a success;
+3. gives up for a minute at 1 (`MISSING`, with the item it lacks).
+
+Two things stop it: `SELF LOOP` means the recipe takes the item itself (1 smithing template -> 2), which AE2
+cannot plan at any amount, so that needs a setup outside AE2 autocrafting. And if a trip round a cycle ends with no
+more than it started with, Butler stops feeding it until the stock level changes.
 
 ## Adding a package
 

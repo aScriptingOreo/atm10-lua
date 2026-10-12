@@ -1,8 +1,9 @@
 -- Butler: ME system manager. Computer next to an ME Bridge, advanced monitor on any side (optional).
 -- Keeps items stocked: autocrafts anything below its keep count.
--- Monitor: HOME is the dashboard, STOCK edits rules (tap one), ADD picks craftable items from the network.
+-- Computer screen: LOG, and ADD (type to search craftable items, pick one, type how many to keep).
+-- Monitor: HOME is the dashboard, STOCK edits rules (tap one).
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
--- @desc ME system manager: keeps items stocked (autocraft), touch dashboard on a monitor
+-- @desc ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor
 -- @deps cn_lib
 -- @config Poll|Seconds between stock checks|10
 -- @config TextScale|Monitor text scale (0.5 small, 1 normal, up to 5)|1
@@ -15,7 +16,8 @@ local SYNC = tonumber(cfg.Sync) or 60
 -- Resolve the commit sha first (like cookienet does) if that ever matters.
 local RULES_URL = "https://raw.githubusercontent.com/aScriptingOreo/atm10-lua/main/programs/Butler.json"
 local DB = "/butler.json" -- local state, not shipped with the package: cookienet update never overwrites it
-local RETRY = 60          -- seconds before re-requesting a craft that failed or never reached a CPU
+local RETRY = 60          -- seconds before trying again a craft nothing could be done about
+local JOB_TIMEOUT = 600   -- a job that never reported back is forgotten after this
 local LOG_MAX = 40
 
 local bridge = peripheral.find("me_bridge") or error("no me_bridge", 0)
@@ -29,15 +31,15 @@ local SHOW = {
   MISSING_ITEMS = "MISSING", NOT_CRAFTABLE = "NO PATTERN",
 }
 local COLOUR = {
-  QUEUED = colours.cyan, CRAFTING = colours.yellow, DONE = colours.lime,
+  QUEUED = colours.cyan, CRAFTING = colours.yellow, PREP = colours.yellow, DONE = colours.lime,
   CANCELED = colours.lightGrey, REBOOTED = colours.lightGrey,
 }
 
 -- ---- state ----
 -- { paused, stock = { ["item:id"] = { keep, batch, blocking, off, label } }, log = { newest first }, seed }
--- keep = min count in ME, batch = max per craft request (AE2 refuses a job it can't fully afford).
--- blocking = one job at a time, sized to what the stock can feed: for cyclical recipes that eat their own
--- output (1 smithing template -> 2), which AE2 can't plan past what is in storage. See want().
+-- keep = min count in ME, batch = max per craft request.
+-- blocking = cyclical recipe (its ingredients come from the item itself): never ask for more than the
+-- current stock can turn into, see want().
 -- seed = the repo rules as last seen, so a re-fetch only overrides a rule when the repo changed it.
 local db = {}
 do
@@ -64,16 +66,21 @@ local function save()
   dirty = false
 end
 
--- runtime per rule: have, st (status text, nil = nothing to say), wait (no new craft before this clock),
--- cap (blocking: request ceiling after a refused job), missing (what the last refused job lacked),
--- ask (refused job to query for that), said (last thing printed, so the terminal only shows changes)
+-- runtime per rule:
+--   have, st (status text, nil = nothing to say), missing (what the last refused job lacked)
+--   job + deadline (our job in flight), done (finished job waiting for settle())
+--   wait (no new request before this clock), cap (request ceiling, halved by a refusal)
+--   sub = { id, label, n } (ingredient to craft before the item), subbed (did that this attempt),
+--   goal + base (what was asked for and what was in stock when the ingredient detour started)
+--   stuck (stock level at which the ingredient detour stopped paying off)
+--   said (last thing logged, so the log only shows changes)
 local rt = {}
 local function rtOf(id)
   local r = rt[id] or {}
   rt[id] = r
   return r
 end
-local jobs = {} -- AP craft job id -> { r, entry (log line), job, name, n = requested, net = stock gained, cyclic }
+local jobs = {} -- AP craft job id -> { r, entry (RECENT line), job, n = requested, sub = is an ingredient job }
 local cpus, online = {}, false
 local synced -- "HH:MM" of the last good rules fetch, false = last one failed
 
@@ -87,29 +94,21 @@ assert(fmt(999) == "999" and fmt(1500) == "1.50K")
 
 local function clean(s) return (tostring(s):gsub("^%[(.*)%]$", "%1")) end -- AP wraps display names in []
 
--- terminal: one line per rule per change, never the same thing twice in a row
-local function say(r, name, what)
-  if r.said == what then return end
-  r.said = what
-  print(os.date("%H:%M") .. " " .. name .. ": " .. what)
-end
-
 -- how many to request for rule e
 local function want(have, e, cap)
   local short = math.max(e.keep - have, 0)
-  if not e.blocking then return math.min(short, e.batch or math.huge) end
-  if short == 0 then return 0 end
-  -- 1 in -> 2 out: a job can run at most `have` crafts (it eats the stock it starts with) and each craft
-  -- nets +1. Asking for 2 per craft doubles the stock every job (2 -> 4 -> 8 ...) instead of +1 a job.
-  return math.max(1, math.min(2 * short, 2 * have, cap or math.huge))
+  local n = math.min(short, e.batch or math.huge, cap or math.huge)
+  -- cyclical: the stock is also the raw material, so at best a job doubles it (2 -> 4 -> 8 ...)
+  if e.blocking and short > 0 then n = math.max(1, math.min(n, 2 * have)) end
+  return n
 end
 assert(want(10, { keep = 64 }) == 54 and want(64, { keep = 64 }) == 0 and want(0, { keep = 1000, batch = 256 }) == 256)
-assert(want(2, { keep = 1000, blocking = true }) == 4 and want(512, { keep = 1000, blocking = true }) == 976)
-assert(want(63, { keep = 64, blocking = true }) == 2 and want(0, { keep = 64, blocking = true }) == 1)
-assert(want(100, { keep = 1000, blocking = true }, 50) == 50 and want(64, { keep = 64, blocking = true }) == 0)
+assert(want(2, { keep = 1000, blocking = true }) == 4 and want(900, { keep = 1000, blocking = true }) == 100)
+assert(want(0, { keep = 64, blocking = true }) == 1 and want(64, { keep = 64, blocking = true }) == 0)
+assert(want(100, { keep = 1000 }, 50) == 50 and want(100, { keep = 1000, blocking = true }, 50) == 50)
 
--- One line per item: a new entry replaces the item's last finished one and carries its total (made),
--- so the log shows what happened lately, not the same line forty times.
+-- One RECENT line per item: a new entry replaces the item's last finished one and carries its total (made),
+-- so the list shows what happened lately, not the same line forty times.
 local function logAdd(e)
   e.t = os.date("%H:%M")
   for i, o in ipairs(db.log) do
@@ -128,13 +127,87 @@ end
 -- job.getMissingItems() -> "7 Vibranium Ingot, 1 End Stone"
 local function missingText(list)
   local t = {}
-  for _, it in ipairs(type(list) == "table" and list or {}) do
+  for _, it in ipairs(list) do
     if type(it) == "table" then t[#t + 1] = fmt(it.count or it.amount) .. " " .. clean(it.displayName or it.name or "?") end
   end
   return #t > 0 and table.concat(t, ", ") or nil
 end
 
+-- ---- computer screen: LOG / ADD (drawn further down, the work needs say()) ----
+local TW, TH = term.getSize()
+local view = "LOG"
+local lines = {} -- log, oldest first, already wrapped to the screen width
+local drawTerm
+
+-- one line per rule per change, never the same thing twice in a row
+local function say(r, name, what)
+  if r.said == what then return end
+  r.said = what
+  local s = os.date("%H:%M") .. " " .. name .. ": " .. what
+  for i = 1, #s, TW do lines[#lines + 1] = s:sub(i, i + TW - 1) end
+  while #lines > 200 do table.remove(lines, 1) end
+  drawTerm()
+end
+
 -- ---- the work ----
+-- A finished job decides what happens next. Runs in the stock pass, not in jobLoop: getMissingItems may yield.
+--
+-- AE2 never feeds stored copies of the REQUESTED item into the plan, so for a cycle (crystal -> dust -> crystal)
+-- a crystal job reports "missing dust" no matter how many crystals are stored. Requesting the dust is a
+-- different job, and that one may eat the crystals. So on MISSING: craft the missing ingredient if it has a
+-- pattern, then try the item again; whatever still does not fit gets halved (N/2, N/4, ...) until it does.
+local function settle(id, r, name)
+  local j = r.done
+  r.done, r.st = nil, nil
+  if j.st == "DONE" then
+    j.entry.made = (j.entry.made or 0) + j.n
+    if j.sub then r.sub, r.subbed = nil, true return end -- ingredient is in: now the item itself
+    if r.subbed and r.have <= (r.base or -1) then
+      -- went round the cycle and ended up with no more than before: stop burning the other ingredients.
+      -- No more ingredient detours until the stock level moves; plain requests carry on.
+      r.stuck = r.have
+      say(r, name, "cycle makes no more than it eats, not feeding it")
+    else
+      say(r, name, "DONE")
+    end
+    r.cap = r.cap and r.cap * 2 -- it fit: grow back
+    r.subbed, r.goal, r.base, r.missing = nil, nil, nil, nil
+    return
+  end
+  if j.st ~= "MISSING" then -- cancelled, no free CPU, ...
+    r.st, r.wait, r.sub = j.st, os.clock() + RETRY, nil
+    return say(r, name, j.st)
+  end
+  local ok, list = pcall(j.job.getMissingItems)
+  list = ok and type(list) == "table" and list or {}
+  r.missing = missingText(list)
+  local itself, sub -- the item is missing itself / first missing ingredient that has a pattern
+  for _, it in ipairs(list) do
+    if type(it) == "table" and it.name == id then
+      itself = true
+    elseif type(it) == "table" and it.name and not (sub or j.sub or r.subbed or r.stuck)
+      and select(2, pcall(bridge.isCraftable, { name = it.name })) == true then
+      sub = it
+    end
+  end
+  if j.sub then
+    -- that much of the ingredient is not affordable (in a cycle it is made out of the item): less, or none
+    if j.n > 1 then r.sub.n = math.floor(j.n / 2) else r.sub, r.subbed = nil, true end
+  elseif itself then
+    -- the recipe takes the item itself (1 template -> 2): AE2 cannot plan that at any amount
+    r.st, r.wait = "SELF LOOP", os.clock() + 10 * RETRY
+    say(r, name, "recipe needs the item itself, AE2 cannot plan that")
+  elseif sub then
+    r.sub = { id = sub.name, label = clean(sub.displayName or sub.name), n = sub.count or sub.amount or 1 }
+    r.goal, r.base = j.n, r.have
+  elseif j.n > 1 then
+    r.cap = math.floor(j.n / 2) -- maybe half is affordable
+  else
+    r.st, r.wait, r.subbed, r.goal, r.base = "MISSING", os.clock() + RETRY, nil, nil, nil
+    say(r, name, "MISSING " .. (r.missing or "?"))
+  end
+end
+
 local function checkStock(id, e)
   local r = rtOf(id)
   local ok, info = pcall(bridge.getItem, { name = id })
@@ -146,36 +219,43 @@ local function checkStock(id, e)
   r.have = info.count or 0
   if info.displayName then e.label = clean(info.displayName) end
   local name = e.label or id
-  if r.ask then -- a job came back MISSING: ask it what for (here, not in jobLoop: the call may yield)
-    local asked, list = pcall(r.ask.getMissingItems)
-    r.ask, r.missing = nil, asked and missingText(list) or nil
-    say(r, name, "MISSING" .. (r.missing and " " .. r.missing or ""))
-  end
+  if r.done then settle(id, r, name) end
+  if r.stuck ~= r.have then r.stuck = nil end -- something was used or added: detours are worth another go
   local n = want(r.have, e, r.cap)
   if n == 0 or e.off or db.paused then
-    r.st, r.missing, r.said = nil, nil, nil
+    r.st, r.missing, r.said, r.wait, r.sub, r.subbed, r.goal, r.base = nil, nil, nil, nil, nil, nil, nil, nil
     return
   end
+  if r.job and os.clock() < r.deadline then return end -- our job is still out
   local _, busy = pcall(bridge.isCrafting, { name = id })
-  if busy == true then r.st = "CRAFTING" return end
+  if busy == true then r.st = "CRAFTING" return end    -- somebody else's job
   if r.st == "CRAFTING" then r.st = nil end
-  -- a request needs a moment to land on a CPU before isCrafting sees it; failures back off the same way
   if os.clock() < (r.wait or 0) then return end
-  r.wait = os.clock() + RETRY
-  local called, job, err = pcall(bridge.craftItem, { name = id, count = n })
-  if not called then job, err = nil, job end
-  r.st = job and "QUEUED" or SHOW[err] or tostring(err)
-  local entry = logAdd({ id = id, label = e.label, n = n, st = r.st })
-  if not job then return say(r, name, r.st) end
-  local gotId, jid = pcall(job.getId)
-  if gotId then
-    -- blocking jobs eat half of what they make: count the net gain, and let a refusal halve the next ask
-    jobs[jid] = { r = r, entry = entry, job = job, name = name, n = n, net = e.blocking and math.ceil(n / 2) or n, cyclic = e.blocking }
+  local what, label = id, e.label
+  if r.sub then
+    what, label, n = r.sub.id, r.sub.label, r.sub.n
+  elseif r.goal then
+    -- back from the ingredient detour: the stock was just turned into ingredients, so size the job by
+    -- what was asked for before, not by what is left in storage
+    n = math.min(r.goal, r.cap or math.huge)
   end
+  local called, job, err = pcall(bridge.craftItem, { name = what, count = n })
+  if not called then job, err = nil, job end
+  local st = job and "QUEUED" or SHOW[err] or tostring(err)
+  local entry = logAdd({ id = what, label = label, n = n, st = st })
+  local gotId, jid
+  if job then gotId, jid = pcall(job.getId) end
+  if not gotId then
+    r.st, r.wait, r.sub = job and "?" or st, os.clock() + RETRY, nil
+    return say(r, name, r.st)
+  end
+  r.st = r.sub and "PREP" or st -- PREP = crafting an ingredient first
+  r.job, r.deadline = jid, os.clock() + JOB_TIMEOUT
+  jobs[jid] = { r = r, entry = entry, job = job, n = n, sub = r.sub ~= nil }
 end
 
 -- Repo rules win only when the repo changed them: a new or edited rule is applied, a removed one is deleted,
--- an untouched one keeps whatever the monitor did to it. Returns true if anything changed.
+-- an untouched one keeps whatever was done to it here. Returns true if anything changed.
 local function applyRules(remote)
   local list, seen, changed = type(remote.stock) == "table" and remote.stock or {}, db.seed, false
   for id, rule in pairs(list) do
@@ -196,14 +276,13 @@ local function applyRules(remote)
   return changed
 end
 
--- ---- drawing (into an invisible window, flipped once per frame: no flicker) ----
+-- ---- monitor (drawn into an invisible window, flipped once per frame: no flicker) ----
 -- Laid out to still work on a 3x2 monitor at text scale 1 (29x12 characters).
 local win, W, H
 local buttons = {}
-local TABS = { "HOME", "STOCK", "ADD" }
+local TABS = { "HOME", "STOCK" }
 local tab, page = "HOME", 1
-local sel, confirm      -- STOCK: selected rule id, its delete button was tapped once
-local letter, pick = nil, {} -- ADD: first-letter filter, craftable items
+local sel, confirm -- STOCK: selected rule id, its delete button was tapped once
 
 local function put(x, y, s, fg, bg)
   win.setCursorPos(x, y)
@@ -284,7 +363,7 @@ local function home(y0)
     rput(w, y, v[3], v[4])
     y = y + 1
   end
-  if #rows == 0 then put(2, y, total > 0 and "all stocked" or "no rules: ADD tab", colours.lightGrey) y = y + 1 end
+  if #rows == 0 then put(2, y, total > 0 and "all stocked" or "no rules: ADD on the computer", colours.lightGrey) y = y + 1 end
 
   local x, rw = 1, W
   if split then x, rw, y = w + 3, W - w - 2, y0 - gap end
@@ -320,17 +399,18 @@ local function stock(y0)
       function() sel = id ~= sel and id or nil end)
     rput(W, y, " " .. fmt(rtOf(id).have) .. "/" .. fmt(e.keep), col, bg)
   end
-  if #ids == 0 then put(2, y0 + 1, "no rules yet: ADD tab", colours.lightGrey) end
+  if #ids == 0 then put(2, y0 + 1, "no rules: ADD on the computer", colours.lightGrey) end
 
   local e = sel and db.stock[sel]
   if not e then return put(2, H - 2, "tap a rule to edit it", colours.lightGrey) end
   local r = rtOf(sel)
   local st, col = state(e, r)
-  put(2, H - 2, (st .. (st == "MISSING" and r.missing and " " .. r.missing or "  keep " .. e.keep)):sub(1, W - 2), col)
+  local detail = (st == "MISSING" or st == "PREP") and r.missing and " " .. r.missing or "  keep " .. e.keep
+  put(2, H - 2, (st .. detail):sub(1, W - 2), col)
   local y = H - 1
   local x = btn(1, y, e.off and " OFF" or " ON ", colours.black, e.off and colours.lightGrey or colours.lime,
     function() e.off = not e.off or nil save() end) + 1
-  -- LOOP = blocking (recipe eats its own output), BULK = whole deficit in one job
+  -- LOOP = blocking (cyclical recipe, sized from the stock), BULK = whole deficit in one job
   x = btn(x, y, e.blocking and " LOOP" or " BULK", colours.white, e.blocking and colours.purple or colours.grey,
     function() e.blocking = not e.blocking or nil save() end) + 1
   x = btn(x, y, " /2", colours.white, colours.grey, function() e.keep = math.floor(e.keep / 2) save() end) + 1
@@ -341,53 +421,7 @@ local function stock(y0)
   end)
 end
 
-local function loadPick()
-  pick = {}
-  -- ponytail: dumps every pattern, but only when this tab is opened, never on a timer (full dumps every
-  -- pass stalled the server on RS). Add a search box if the letter bar gets too coarse.
-  local ok, list = pcall(bridge.getCraftableItems)
-  local seen = {}
-  for _, it in ipairs(ok and type(list) == "table" and list or {}) do
-    if it.name and not seen[it.name] then -- one row per id, NBT variants collapse
-      seen[it.name] = true
-      pick[#pick + 1] = { id = it.name, label = clean(it.displayName or it.name) }
-    end
-  end
-  table.sort(pick, function(a, b) return a.label:lower() < b.label:lower() end)
-end
-
-local function add(y0)
-  local gap = W >= 56 and 1 or 0
-  local fg, bg = tabCol(not letter)
-  local x = btn(1, y0, "*", fg, bg, function() letter, page = nil, 1 end) + gap
-  for c in ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):gmatch(".") do
-    fg, bg = tabCol(letter == c)
-    x = btn(x, y0, c, fg, bg, function() letter, page = c, 1 end) + gap
-  end
-  local list = {}
-  for _, p in ipairs(pick) do
-    if not letter or p.label:sub(1, 1):upper() == letter then list[#list + 1] = p end
-  end
-  local per = H - 1 - y0
-  local first = pager(#list, per)
-  for i = 1, per do
-    local p = list[first + i]
-    if not p then break end
-    local line = (p.label .. (" "):rep(W)):sub(1, math.max(0, W - 3))
-    if db.stock[p.id] then
-      put(1, y0 + i, " * " .. line, colours.grey)
-    else
-      btn(1, y0 + i, " + " .. line, colours.white, colours.black, function()
-        db.stock[p.id] = { keep = 64, label = p.label }
-        sel = p.id -- so STOCK opens with it ready to edit
-        save()
-      end)
-    end
-  end
-  if #list == 0 then put(2, y0 + 2, #pick == 0 and "no patterns found" or "nothing under " .. letter, colours.lightGrey) end
-end
-
-local VIEWS = { HOME = home, STOCK = stock, ADD = add }
+local VIEWS = { HOME = home, STOCK = stock }
 
 local function draw()
   if not mon then return end
@@ -412,13 +446,171 @@ local function draw()
   local x = 1
   for _, t in ipairs(TABS) do
     local fg, bg = tabCol(tab == t)
-    x = btn(x, 2, " " .. t .. " ", fg, bg, function()
-      tab, page = t, 1
-      if t == "ADD" then loadPick() end
-    end)
+    x = btn(x, 2, " " .. t .. " ", fg, bg, function() tab, page = t, 1 end)
   end
   VIEWS[tab](3)
   win.setVisible(true)
+end
+
+-- ---- computer screen ----
+local pick = {}                       -- craftable items: { id, label, key (lowercase haystack) }
+local query, found, cur, top = "", {}, 1, 0 -- ADD: search text, matches, highlighted one, rows scrolled
+local asking                          -- picked item, now typing its keep: { id, label, text }
+local note                            -- last thing that happened on ADD
+local LIST_Y = 5                      -- first result row
+
+local function tput(x, y, s, fg, bg)
+  term.setCursorPos(x, y)
+  term.setTextColour(fg or colours.white)
+  term.setBackgroundColour(bg or colours.black)
+  term.write(s)
+end
+
+function drawTerm()
+  term.setBackgroundColour(colours.black)
+  term.clear()
+  term.setCursorBlink(false)
+  tput(1, 1, (" "):rep(TW), nil, colours.grey)
+  local fg, bg = tabCol(view == "LOG")
+  tput(1, 1, " LOG ", fg, bg)
+  fg, bg = tabCol(view == "ADD")
+  tput(6, 1, " ADD ", fg, bg)
+  tput(TW - 16, 1, "Tab switches tab", colours.lightGrey, colours.grey)
+  if view == "LOG" then
+    local first = math.max(0, #lines - (TH - 1))
+    for i = 1, TH - 1 do
+      if lines[first + i] then tput(1, i + 1, lines[first + i]) end
+    end
+    return
+  end
+  local prompt, text = "Search: ", query
+  if asking then
+    prompt, text = "Keep at least: ", asking.text
+    tput(1, 4, (asking.label .. "  -  Enter saves, Tab cancels"):sub(1, TW), colours.lightGrey)
+  else
+    tput(1, 4, (#found .. " craftable. Click one, or arrows + Enter."):sub(1, TW), colours.lightGrey)
+  end
+  tput(1, 3, prompt, colours.yellow)
+  tput(#prompt + 1, 3, text)
+  for i = 1, TH - LIST_Y do
+    local p = found[top + i]
+    if not p then break end
+    local rule = db.stock[p.id]
+    local on = top + i == cur
+    tput(1, LIST_Y + i - 1, ((on and "> " or "  ") .. p.label .. (" "):rep(TW)):sub(1, TW),
+      rule and colours.lime or colours.white, on and colours.grey or colours.black)
+    if rule then tput(TW - 11, LIST_Y + i - 1, (" keep " .. fmt(rule.keep) .. "      "):sub(1, 12), colours.lime, on and colours.grey or colours.black) end
+  end
+  if note then tput(1, TH, note:sub(1, TW), colours.lime) end
+  term.setCursorPos(#prompt + #text + 1, 3)
+  term.setTextColour(colours.white)
+  term.setCursorBlink(true)
+end
+
+-- every word typed must appear somewhere in the name or the id: "unob temp" finds the template
+local function search()
+  found, cur, top = {}, 1, 0
+  local words = {}
+  for w in query:lower():gmatch("%S+") do words[#words + 1] = w end
+  for _, p in ipairs(pick) do
+    local ok = true
+    for _, w in ipairs(words) do
+      if not p.key:find(w, 1, true) then ok = false break end
+    end
+    if ok then found[#found + 1] = p end
+  end
+end
+do
+  pick, query = { { key = "unobtainium smithing template a:unob" }, { key = "glass minecraft:glass" } }, "unob TEMP"
+  search()
+  assert(#found == 1)
+  pick, query, found = {}, "", {}
+end
+
+local function loadPick()
+  pick = {}
+  -- ponytail: dumps every pattern, but only when ADD is opened, never on a timer (full dumps every pass
+  -- stalled the server on RS).
+  local ok, list = pcall(bridge.getCraftableItems)
+  local seen = {}
+  for _, it in ipairs(ok and type(list) == "table" and list or {}) do
+    if it.name and not seen[it.name] then -- one row per id, NBT variants collapse
+      seen[it.name] = true
+      local label = clean(it.displayName or it.name)
+      pick[#pick + 1] = { id = it.name, label = label, key = (label .. " " .. it.name):lower() }
+    end
+  end
+  table.sort(pick, function(a, b) return a.key < b.key end)
+end
+
+local function openView(v)
+  view, asking, note = v, nil, nil
+  if v == "ADD" then
+    loadPick()
+    search()
+    if #pick == 0 then note = "no patterns found (bridge offline?)" end
+  end
+end
+
+local function move(d)
+  local rows = TH - LIST_Y
+  cur = math.max(1, math.min(#found, cur + d))
+  if cur <= top then top = cur - 1 end
+  if cur > top + rows then top = cur - rows end
+end
+
+local function choose(p)
+  if not p then return end
+  asking, note = { id = p.id, label = p.label, text = tostring(db.stock[p.id] and db.stock[p.id].keep or 64) }, nil
+end
+
+local function saveKeep()
+  local n = tonumber(asking.text)
+  if not n or n < 1 then note = "type a number above 0" return end
+  local e = db.stock[asking.id] or { label = asking.label }
+  e.keep = math.floor(n)
+  db.stock[asking.id] = e
+  sel = asking.id -- so STOCK on the monitor has it ready to edit
+  save()
+  note = asking.label .. ": keep " .. e.keep
+  asking, query = nil, ""
+  search()
+  os.queueEvent("butler_poke")
+end
+
+local function typed(s)
+  if view ~= "ADD" then return end
+  if asking then
+    asking.text = asking.text .. s:gsub("%D", "")
+  else
+    query = query .. s
+    search()
+  end
+end
+
+local function pressed(k)
+  if k == keys.tab then
+    if asking then asking = nil else openView(view == "LOG" and "ADD" or "LOG") end
+  elseif view ~= "ADD" then
+    return
+  elseif k == keys.backspace then
+    if asking then asking.text = asking.text:sub(1, -2) else query = query:sub(1, -2) search() end
+  elseif k == keys.enter or k == keys.numPadEnter then
+    if asking then saveKeep() else choose(found[cur]) end
+  elseif k == keys.up then move(-1)
+  elseif k == keys.down then move(1)
+  elseif k == keys.pageUp then move(LIST_Y - TH)
+  elseif k == keys.pageDown then move(TH - LIST_Y)
+  end
+end
+
+local function clicked(x, y)
+  if y == 1 and x <= 10 then
+    openView(x <= 5 and "LOG" or "ADD")
+  elseif view == "ADD" and not asking and y >= LIST_Y and found[top + y - LIST_Y + 1] then
+    cur = top + y - LIST_Y + 1
+    choose(found[cur])
+  end
 end
 
 -- ---- loops ----
@@ -446,30 +638,20 @@ local function cpuLoop()
   end
 end
 
--- AP reports on jobs we started: ae_crafting, isError, jobId, status
+-- AP reports on jobs we started: ae_crafting, isError, jobId, status. Only records; settle() decides.
 local function jobLoop()
   while true do
     local _, _, jid, status = os.pullEvent("ae_crafting")
     local j = jobs[jid]
     if j then
-      local st, r = SHOW[status] or tostring(status), j.r
-      j.entry.st, r.st = st, st ~= "DONE" and st or nil
-      if not LIVE[st] then
-        jobs[jid] = nil
-        if st == "DONE" then
-          j.entry.made = (j.entry.made or 0) + j.net
-          if r.cap then r.cap = r.cap * 2 end -- it fit: grow back
-          r.wait, r.missing = nil, nil -- still short (batch cap, blocking)? ask for the next one now
-          say(r, j.name, "DONE")
-        elseif st == "MISSING" and j.cyclic and j.n > 1 then
-          -- too big for the other ingredients (ingots ran out before templates did): try half, now
-          r.cap, r.wait = math.floor(j.n / 2), nil
-        elseif st == "MISSING" then
-          r.ask = j.job -- the stock pass asks the job what it lacked, and prints it
-        else
-          say(r, j.name, st)
-        end
-        os.queueEvent("butler_poke")
+      local st = SHOW[status] or tostring(status)
+      j.entry.st = st
+      if LIVE[st] then
+        j.r.st = j.sub and "PREP" or st
+      else
+        jobs[jid], j.st = nil, st
+        j.r.job, j.r.done = nil, j
+        os.queueEvent("butler_poke") -- next step now, not at the next poll
       end
       dirty = true
       draw()
@@ -498,22 +680,38 @@ end
 
 local function uiLoop()
   while true do
-    local ev, _, x, y = os.pullEvent()
+    local ev, a, b, c = os.pullEvent()
     if ev == "monitor_touch" then
       local armed = confirm
       confirm = nil
-      for _, b in ipairs(buttons) do
-        if y == b[3] and x >= b[1] and x <= b[2] then b[4](armed) break end
+      for _, hit in ipairs(buttons) do
+        if c == hit[3] and b >= hit[1] and b <= hit[2] then hit[4](armed) break end
       end
       draw()
     elseif ev == "monitor_resize" then
       draw()
+    elseif ev == "char" or ev == "paste" or ev == "key" or ev == "mouse_click" or ev == "mouse_scroll" or ev == "term_resize" then
+      if ev == "key" then pressed(a)
+      elseif ev == "mouse_click" then clicked(b, c)
+      elseif ev == "mouse_scroll" then if view == "ADD" and not asking then move(a * 3) end
+      elseif ev == "term_resize" then TW, TH = term.getSize()
+      else typed(a) end
+      drawTerm()
+      draw() -- a rule may have been added
     end
   end
 end
 
-print("butler running" .. (mon and "" or ", no monitor (headless)") .. ". Only changes are printed here.")
+lines[1] = "butler running" .. (mon and "" or ", no monitor") .. ". Only changes show up here."
+drawTerm()
 draw()
 local loops = { stockLoop, cpuLoop, jobLoop, uiLoop }
 if SYNC > 0 then loops[#loops + 1] = syncLoop end
-parallel.waitForAny(table.unpack(loops))
+local ok, err = pcall(parallel.waitForAny, table.unpack(loops))
+-- leave a clean prompt behind on Ctrl+T or a crash
+term.setBackgroundColour(colours.black)
+term.setTextColour(colours.white)
+term.setCursorBlink(false)
+term.clear()
+term.setCursorPos(1, 1)
+if not ok then error(err, 0) end
