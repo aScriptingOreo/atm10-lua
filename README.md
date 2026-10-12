@@ -39,6 +39,13 @@ The computer with the ME Bridge is the main: it polls and broadcasts (rednet `me
 The activity feed lists what changed between two scans, so a lower `ScanEvery` makes it livelier (and costs the server more).
 Right-click a dashboard monitor for the next page.
 
+## ME stock keeper
+
+`cookienet get ME_Stock --boot` on a computer next to an ME Bridge. It autocrafts every item in
+`programs/ME_Stock.json` that is below its keep count (`"item:id": 256`, or `{ "keep": 1024, "batch": 256 }`
+to cap one craft request). Each item needs a pattern. Edit the list in this repo and push: `cookienet update`
+(runs on boot) overwrites the copy on the computer.
+
 ## Adding a package
 
 1. Put files in the repo (programs under `programs/`).

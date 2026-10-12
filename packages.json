@@ -31,6 +31,24 @@
     ],
     "main": "programs/ME_Monitor.lua"
   },
+  "ME_Stock": {
+    "desc": "Keep ME items stocked: autocraft when below a count (list in ME_Stock.json)",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "Poll",
+        "prompt": "Seconds between checks",
+        "default": "10"
+      }
+    ],
+    "files": [
+      "programs/ME_Stock.lua",
+      "programs/ME_Stock.json"
+    ],
+    "main": "programs/ME_Stock.lua"
+  },
   "RS_ItemToRedstone": {
     "desc": "Redstone out while an RS item is at/below a count",
     "deps": [
