@@ -114,7 +114,8 @@ A manipulator cannot be told what to do by a computer. It does the one thing its
 a redstone signal arrives. So: one manipulator per action, each with a **Redstone Relay** (CC block) touching it,
 and a wired modem on each relay.
 
-1. Decide the order, e.g. `clear, rain, storm, sunrise, midday, sunset, midnight` (that is the default `Actions`).
+1. The order is the list in `programs/Weather.json`: clear, rain, storm, sunrise, noon, sunset, moonrise, midnight,
+   moonset. Fewer machines than names is fine, the rest of the list is ignored.
 2. Place manipulator + relay pairs. A relay must touch only its own manipulator: it powers all six faces.
 3. **Right-click the relays' modems in that order.** Relays are numbered as they join the network, and the script
    takes them lowest number first. The computer's screen lists which relay got which name.
@@ -122,7 +123,8 @@ and a wired modem on each relay.
 5. Power them: 256,000 RF per weather change.
 
 On the computer: a number or a click fires that action, `K` keeps the sky clear (a stop-rain pulse every 30 s,
-which costs nothing while it is dry). A different order or fewer machines: `cookienet config Actions=clear,rain`.
+which costs nothing while it is dry; it fires the action named `clear`). A different order: edit
+`programs/Weather.json` and push. It is re-fetched every minute (GitHub caches it, so allow about 5), no reboot.
 With a wireless or ender modem, Butler gets a `SKY` tab with the same list and keys.
 
 Skip 24h does not fit: it runs only while the signal is held, and this sends one-second pulses.

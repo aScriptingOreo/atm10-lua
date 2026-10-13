@@ -183,18 +183,9 @@
   },
   "Weather": {
     "desc": "Weather machine: fires DE celestial manipulators through redstone relays, local keys + Butler's SKY tab",
-    "deps": [
-      "cn_lib"
-    ],
-    "config": [
-      {
-        "key": "Actions",
-        "prompt": "What each manipulator does, in the order the relays joined the network",
-        "default": "clear,rain,storm,sunrise,midday,sunset,midnight"
-      }
-    ],
     "files": [
-      "programs/Weather.lua"
+      "programs/Weather.lua",
+      "programs/Weather.json"
     ],
     "main": "programs/Weather.lua"
   },

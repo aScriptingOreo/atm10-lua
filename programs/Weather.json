@@ -1,0 +1,13 @@
+{
+  "actions": [
+    "clear",
+    "rain",
+    "storm",
+    "sunrise",
+    "noon",
+    "sunset",
+    "moonrise",
+    "midnight",
+    "moonset"
+  ]
+}
