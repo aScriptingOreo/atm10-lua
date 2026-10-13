@@ -2,7 +2,8 @@
   "Butler": {
     "desc": "ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor",
     "deps": [
-      "cn_lib"
+      "cn_lib",
+      "de_view"
     ],
     "config": [
       {
@@ -32,6 +33,24 @@
       "programs/DE_Core.lua"
     ],
     "main": "programs/DE_Core.lua"
+  },
+  "DE_Monitor": {
+    "desc": "Draconic reactor + energy core stats on a monitor, touch to switch (needs DE_Reactor / DE_Core running)",
+    "deps": [
+      "cn_lib",
+      "de_view"
+    ],
+    "config": [
+      {
+        "key": "TextScale",
+        "prompt": "Monitor text scale (0.5 = most data)",
+        "default": "0.5"
+      }
+    ],
+    "files": [
+      "programs/DE_Monitor.lua"
+    ],
+    "main": "programs/DE_Monitor.lua"
   },
   "DE_Reactor": {
     "desc": "Draconic Evolution reactor control: holds temperature and field, auto start/stop, shuts down on trouble",
@@ -163,6 +182,12 @@
     "files": [
       "cookienet.lua",
       "startup/cn.lua"
+    ]
+  },
+  "de_view": {
+    "desc": "reactor / energy core screens for Butler and DE_Monitor (auto-installed as a dependency)",
+    "files": [
+      "lib/de_view.lua"
     ]
   },
   "reactor_rs": {

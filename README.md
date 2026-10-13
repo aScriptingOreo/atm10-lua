@@ -78,19 +78,30 @@ Three things it cannot save. Get them right before the first start:
 
 The computer updates itself from this repo on every boot (`cookienet update`), reactor script included.
 
-Remote: put a wireless or ender modem on the reactor computer and on the Butler computer. Butler gets a `REACTOR`
-tab on its own screen: gauges, five minutes of temperature and field history, the reactor's last log line, and
-`S` / `X` to start and stop it. Control stays on the reactor computer: if the link drops the tab says NO SIGNAL
+### Screens elsewhere
+
+The reactor computer broadcasts its status over rednet, so it needs a wireless or ender modem as well as its
+wired ones. Everything below only listens (and can send start/stop): if a link drops the screen says NO SIGNAL
 and the reactor carries on.
 
-Energy core: `cookienet get DE_Core --boot` on a computer touching one of the core's energy pylons (no wired
-modem needed when it touches; one pylon is enough, they all read the same core), with a wireless or ender modem on
-another side. The `REACTOR` tab gains a `Storage` line: level, net RF/t, and time until full or empty.
+- **Energy core**: `cookienet get DE_Core --boot` on a computer touching one of the core's energy pylons (no wired
+  modem needed when it touches; one pylon is enough, they all read the same core), modem on another side.
+  Broadcasts level and flow.
+- **Butler** (modem on its computer): `REACTOR` and `CORE` tabs on the computer, `S` / `X` in `REACTOR` to start
+  and stop. Every monitor on Butler gets `CRAFTING` / `REACTOR` / `CORE` buttons on its bottom row: right-click
+  one to switch what that monitor shows. Each monitor remembers its choice.
+- **A screen of its own**: `cookienet get DE_Monitor --boot` on any computer with a monitor and a modem.
+  100 columns or more shows reactor and core side by side, a narrower one has `REACTOR` / `CORE` buttons.
+  To turn the ME monitor's screen into this: `cookienet rm ME_Monitor`, then the line above.
 
-Alarm: the `REACTOR` tab turns red from any tab, and a speaker on the Butler computer (any side, or on its wired
-network) sounds. Fast two-tone = field under half its target, over 8500 C, or meltdown. One beep every 2 s = it
-shut itself down (15 s), or the reactor computer went quiet while the reactor was live. `M` in the tab mutes
-until the alarm clears.
+All of them draw the same screens (`lib/de_view.lua`), laid out for whatever size they get: gauges, temperature
+and field history, the reactor's log; for the core its level, in / out / net RF/t, time until full or empty, and
+level history.
+
+Alarm: `REACTOR` turns red on every screen, and a speaker on the Butler or DE_Monitor computer (any side, or on
+its wired network) sounds. Fast two-tone = field under half its target, over 8500 C, or meltdown. One beep every
+2 s = it shut itself down (15 s), or the reactor computer went quiet while the reactor was live. `M` in Butler's
+`REACTOR` or `CORE` tab mutes until the alarm clears.
 
 `python tools/test_de_reactor.py` (needs `pip install lupa`) runs the script against a port of the reactor's tick.
 
@@ -108,8 +119,8 @@ Right-click a dashboard monitor for the next page.
 
 ## Butler (ME system manager)
 
-`cookienet get Butler --boot` on a computer touching an ME Bridge and an advanced monitor (any sides, 3x2 blocks
-or bigger). It autocrafts every item that is below its `keep` count.
+`cookienet get Butler --boot` on a computer touching an ME Bridge, with advanced monitors on any side or on a wired
+modem (3x2 blocks or bigger, any number). It autocrafts every item that is below its `keep` count.
 
 On the computer (Tab or a click switches tab):
 
@@ -119,7 +130,8 @@ On the computer (Tab or a click switches tab):
 - **MANAGE**: type to search the craftable items ("unob temp" finds the Unobtainium template). Click a result, or
   arrows + Enter, then type how many to keep and press Enter. Picking an item that already has a rule edits it.
 
-The monitor is a read-only crafting dashboard: busy CPUs, rules that are not satisfied, and what Butler crafted lately.
+The monitors show a read-only crafting dashboard: busy CPUs, rules that are not satisfied, and what Butler crafted
+lately. With a modem they can also show the Draconic reactor and energy core, see [Screens elsewhere](#screens-elsewhere).
 
 Monitor text size: `cookienet config TextScale=1` (0.5 to 5 in steps of 0.5), then reboot the computer.
 
