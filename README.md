@@ -58,9 +58,14 @@ At 8000 C a full core (8 awakened blocks) makes about 5.4M RF/t fresh, rising to
 and spends 1.6M to 2.4M of it on the field.
 
 Remote: put a wireless or ender modem on the reactor computer and on the Butler computer. Butler gets a `REACTOR`
-tab with the live numbers, the reactor's log and `S` / `X` to start and stop it. Control stays on the reactor
-computer: if the link drops the tab says NO SIGNAL and the reactor carries on. Anyone in modem range who sends
-on rednet protocol `de_reactor` can start or stop it too.
+tab on its own screen: gauges, five minutes of temperature and field history, the reactor's last log line, and
+`S` / `X` to start and stop it. Control stays on the reactor computer: if the link drops the tab says NO SIGNAL
+and the reactor carries on.
+
+Alarm: the `REACTOR` tab turns red from any tab, and a speaker on the Butler computer (any side, or on its wired
+network) sounds. Fast two-tone = field under half its target, over 8500 C, or meltdown. One beep every 2 s = it
+shut itself down (15 s), or the reactor computer went quiet while the reactor was live. `M` in the tab mutes
+until the alarm clears.
 
 `python tools/test_de_reactor.py` (needs `pip install lupa`) runs the script against a port of the reactor's tick.
 

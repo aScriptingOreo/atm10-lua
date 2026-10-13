@@ -1,7 +1,8 @@
 -- Butler: ME system manager. Computer next to an ME Bridge, advanced monitor on any side (optional).
 -- Keeps items stocked: autocrafts anything below its keep count.
 -- Computer screen: LOG, STOCK (edit the rules), MANAGE (type to search craftable items, pick one, type how many).
--- With a modem and a DE_Reactor computer in range: REACTOR tab, its status and start/stop.
+-- With a modem and a DE_Reactor computer in range: REACTOR tab, its status, history and start/stop.
+-- A speaker (any side or on a wired modem) sounds when the reactor is in trouble or stops answering.
 -- Monitor: read-only crafting dashboard.
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
 -- @desc ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor
@@ -396,11 +397,25 @@ local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "REACTOR", REACTOR = "L
 local RPROTO = "de_reactor"
 local hasModem = false
 peripheral.find("modem", function(name) rednet.open(name) hasModem = true end)
+local speaker = peripheral.find("speaker")
 local rx, rxAt -- last status, os.clock() when it came in
+local hist = {}                 -- { temp, field } every HIST_EVERY seconds, newest last
+local HIST_EVERY = 6            -- 51 columns of it = the last 5 minutes
+local tripAt, muted = -math.huge, false -- when the reactor last shut itself down; M pressed
 local RSTATUS = {
   cold = colours.lightGrey, warming_up = colours.yellow, running = colours.lime, stopping = colours.orange,
   cooling = colours.lightBlue,
 }
+
+-- "crit": it is about to be lost. "warn": it shut itself down, or went quiet while it was live.
+local function reactorAlarm()
+  if not rx then return end
+  local hot = rx.status == "running" or rx.status == "stopping"
+  if os.clock() - rxAt > 5 then return (hot or rx.status == "warming_up") and "warn" or nil end
+  if rx.status == "beyond_hope" then return "crit" end
+  if hot and ((rx.field or 1) < (rx.hold or 0) / 2 or (rx.temp or 0) > 8500) then return "crit" end
+  if os.clock() - tripAt < 15 then return "warn" end
+end
 
 local function tput(x, y, s, fg, bg)
   term.setCursorPos(x, y)
@@ -461,30 +476,60 @@ local function drawStock()
   end
 end
 
+-- teletext blocks: drawn black on colour they light the bottom third / bottom two thirds of a cell
+local PART = { "\143", "\131" }
+local function graph(y, rows, key, max, colOf)
+  for c = 1, TW do
+    local h = hist[#hist - TW + c]
+    local v = h and h[key]
+    local lit = v and math.max(1, math.floor(math.min(1, v / max) * rows * 3 + 0.5)) or 0
+    for r = 0, rows - 1 do
+      local n = math.min(3, lit - r * 3)
+      if n == 3 then tput(c, y + rows - 1 - r, " ", nil, colOf(v))
+      elseif n > 0 then tput(c, y + rows - 1 - r, PART[n], colours.black, colOf(v)) end
+    end
+  end
+end
+
 local function drawReactor()
   if not hasModem then return tput(1, 3, "no modem on this computer", colours.red) end
-  if not rx or os.clock() - rxAt > 5 then
-    return tput(1, 3, rx and "NO SIGNAL from the reactor computer" or "waiting for the reactor computer...", colours.red)
-  end
-  local function row(y, label, text, col)
+  if not rx then return tput(1, 3, "waiting for the reactor computer...", colours.lightGrey) end
+  local BAR = 34 -- gauges start here
+  local function row(y, label, text, col, frac)
     tput(1, y, label, colours.lightGrey)
-    tput(13, y, text:sub(1, TW - 12), col)
+    tput(13, y, text:sub(1, (frac and BAR - 1 or TW + 1) - 13), col)
+    if frac then
+      local w = TW - BAR + 1
+      local n = math.floor(w * math.max(0, math.min(1, frac)) + 0.5)
+      tput(BAR, y, (" "):rep(n), nil, col or colours.white)
+      tput(BAR + n, y, (" "):rep(w - n), nil, colours.grey)
+    end
   end
   local pct = function(v) return ("%.1f%%"):format((v or 0) * 100) end
+  local temp, field, hold = rx.temp or 0, rx.field or 0, rx.hold or 0
+  local function tempCol(t) return t > 8500 and colours.red or t > (rx.target or 8000) + 100 and colours.orange or colours.lime end
+  local function fieldCol(f) return f < hold / 2 and colours.red or f < hold * 0.8 and colours.orange or colours.lightBlue end
   local st = tostring(rx.status or "?")
   row(2, "Status", st:upper():gsub("_", " ") .. (rx.want and "   (asked to " .. rx.want .. ")" or ""), RSTATUS[st] or colours.red)
-  row(3, "Temperature", ("%.0f / %.0f C"):format(rx.temp or 0, rx.target or 0), (rx.temp or 0) > 8500 and colours.red or colours.white)
-  row(4, "Field", pct(rx.field) .. "  hold " .. pct(rx.hold), (rx.field or 0) < (rx.hold or 0) / 2 and colours.red or colours.white)
-  row(5, "Saturation", pct(rx.sat))
-  row(6, "Fuel used", pct(rx.fuel) .. "  stop at " .. pct(rx.stopAt))
+  row(3, "Temperature", ("%.0f / %.0f C"):format(temp, rx.target or 0), tempCol(temp), temp / 10000)
+  row(4, "Field", pct(field) .. "  hold " .. pct(hold), fieldCol(field), field)
+  row(5, "Saturation", pct(rx.sat), colours.cyan, rx.sat or 0)
+  row(6, "Fuel used", pct(rx.fuel) .. "  stop at " .. pct(rx.stopAt), colours.yellow, rx.fuel or 0)
   local net = (rx.gen or 0) - (rx.inFlow or 0)
   row(7, "Power", ("gen %s  in %s  net %s RF/t"):format(fmt(rx.gen or 0), fmt(rx.inFlow or 0), fmt(net)), net >= 0 and colours.lime or colours.red)
-  if rx.alarm then tput(1, 8, tostring(rx.alarm):sub(1, TW), colours.white, colours.red) end
-  for n = 1, TH - 10 do
-    local l = type(rx.log) == "table" and rx.log[n]
-    if l then tput(1, 8 + n, tostring(l):sub(1, TW), colours.lightGrey) end
+  if os.clock() - rxAt > 5 then
+    tput(1, 8, ("NO SIGNAL from the reactor computer (old numbers)" .. (" "):rep(TW)):sub(1, TW), colours.white, colours.red)
+  elseif rx.alarm then
+    tput(1, 8, tostring(rx.alarm):sub(1, TW), colours.white, colours.red)
   end
-  tput(1, TH, (note or "S start  X stop"):sub(1, TW), note and colours.lime or colours.lightGrey)
+  tput(1, 9, "Temperature, last 5 min (top = 10000 C)", colours.lightGrey)
+  graph(10, 4, "temp", 10000, tempCol)
+  tput(1, 14, "Field (top = 100%)", colours.lightGrey)
+  graph(15, 3, "field", 1, fieldCol)
+  local last = type(rx.log) == "table" and rx.log[1]
+  if last then tput(1, TH - 1, tostring(last):sub(1, TW), tostring(last):find("SHUTDOWN") and colours.orange or colours.lightGrey) end
+  local help = "S start  X stop" .. (speaker and (muted and "  M unmute" or "  M mute alarm") or "")
+  tput(1, TH, (note or help):sub(1, TW), note and colours.lime or colours.lightGrey)
 end
 
 function drawTerm()
@@ -495,6 +540,7 @@ function drawTerm()
   local x = 1
   for _, v in ipairs(TABS) do
     local fg, bg = tabCol(view == v)
+    if v == "REACTOR" and reactorAlarm() then fg, bg = colours.white, colours.red end -- seen from any tab
     tput(x, 1, " " .. v .. " ", fg, bg)
     x = x + #v + 2
   end
@@ -657,6 +703,8 @@ local function typed(s)
     if cmd then
       rednet.broadcast({ cmd = cmd }, RPROTO)
       note = "sent: " .. (cmd == "run" and "start" or "stop")
+    elseif s:lower() == "m" then
+      muted = not muted -- comes back by itself once the alarm has cleared
     end
   end
 end
@@ -777,10 +825,42 @@ local function syncLoop()
 end
 
 local function reactorLoop()
+  local lastTop, sampled = nil, -math.huge
   while true do
     local _, msg = rednet.receive(RPROTO, 5) -- the timeout redraws too, so a dead link shows as NO SIGNAL
-    if type(msg) == "table" and msg.status then rx, rxAt = msg, os.clock() end
+    if type(msg) == "table" and msg.status then
+      rx, rxAt = msg, os.clock()
+      local top = type(msg.log) == "table" and msg.log[1] or ""
+      -- a new SHUTDOWN line = it just tripped. Not on the first message: that line may be hours old.
+      if lastTop and top ~= lastTop and tostring(top):find("SHUTDOWN") then tripAt = os.clock() end
+      lastTop = top
+      if os.clock() - sampled >= HIST_EVERY then
+        sampled = os.clock()
+        hist[#hist + 1] = { temp = msg.temp or 0, field = msg.field or 0 }
+        if #hist > 200 then table.remove(hist, 1) end
+      end
+    end
     if view == "REACTOR" then drawTerm() end
+  end
+end
+
+-- runs without a speaker too: it is what turns the REACTOR tab red
+local function alarmLoop()
+  local n, last = 0, nil
+  while true do
+    local a = reactorAlarm()
+    if not a then muted = false end
+    if a ~= last then
+      last = a
+      drawTerm()
+    end
+    n = n + 1
+    if speaker and a and not muted then
+      -- two-tone twice a second when it is critical, one beep every 2 s otherwise
+      if a == "crit" then pcall(speaker.playNote, "bit", 3, n % 2 == 0 and 18 or 12)
+      elseif n % 4 == 0 then pcall(speaker.playNote, "bit", 2, 12) end
+    end
+    sleep(0.5)
   end
 end
 
@@ -806,7 +886,10 @@ drawTerm()
 draw()
 local loops = { stockLoop, cpuLoop, jobLoop, uiLoop }
 if SYNC > 0 then loops[#loops + 1] = syncLoop end
-if hasModem then loops[#loops + 1] = reactorLoop end
+if hasModem then
+  loops[#loops + 1] = reactorLoop
+  loops[#loops + 1] = alarmLoop
+end
 local ok, err = pcall(parallel.waitForAny, table.unpack(loops))
 -- leave a clean prompt behind on Ctrl+T or a crash
 term.setBackgroundColour(colours.black)
