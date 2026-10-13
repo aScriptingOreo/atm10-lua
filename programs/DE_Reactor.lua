@@ -59,9 +59,11 @@ local function ratio(a, b) return b and b > 0 and a / b or 0 end
 local function fmt(n)
   local u, i = { "", "K", "M", "G", "T" }, 1
   while math.abs(n) >= 1000 and i < #u do n, i = n / 1000, i + 1 end
-  return (i == 1 and "%.0f" or "%.2f"):format(n) .. u[i]
+  -- three digits whatever the size, so the power line fits a small monitor
+  local a = math.abs(n)
+  return ((i == 1 or a >= 100) and "%.0f" or a >= 10 and "%.1f" or "%.2f"):format(n) .. u[i]
 end
-assert(fmt(999) == "999" and fmt(2.5e6) == "2.50M")
+assert(fmt(999) == "999" and fmt(2.5e6) == "2.50M" and fmt(808370) == "808K" and fmt(23.9e6) == "23.9M")
 
 local function dur(sec)
   return ("%.0fh%02.0fm"):format(math.floor(sec / 3600), math.floor(sec % 3600 / 60))
@@ -333,9 +335,10 @@ local function draw(t)
     gauge(8, "Fuel used", ("%.1f%%  stop at %.0f%%"):format(view.fuel * 100, STOP_AT * 100), view.fuel,
       view.fuel >= STOP_AT and colours.red or colours.yellow)
     local net = i.generationRate - view.inFlow
-    put(1, 10, ("Gen %s  In %s  Net "):format(fmt(i.generationRate), fmt(view.inFlow)), colours.lightGrey)
+    local sep = W >= 34 and "  " or " "
+    put(1, 10, ("Gen %s%sIn %s%sNet "):format(fmt(i.generationRate), sep, fmt(view.inFlow), sep), colours.lightGrey)
     win.setTextColour(net >= 0 and colours.lime or colours.red)
-    win.write((net >= 0 and "+" or "") .. fmt(net) .. " RF/t")
+    win.write((net >= 0 and "+" or "") .. fmt(net) .. (W >= 34 and " RF/t" or ""))
     if i.status == "running" and i.fuelConversionRate > 0 then
       -- fuelConversionRate is millionths of a mB per tick
       local left = dur((STOP_AT * i.maxFuelConversion - i.fuelConversion) / i.fuelConversionRate * 1e6 / 20)
