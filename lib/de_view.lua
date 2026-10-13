@@ -248,6 +248,40 @@ function V.core(win, x0, y0, W, H)
   end
 end
 
+-- A short, wide monitor (a 1-block strip): one status line, then the gauges side by side as thick bars.
+function V.strip(win, x0, y0, W, H)
+  local put = painter(win, x0, y0, W, H)
+  if not rx then return put(1, 1, "waiting for the reactor computer...", colours.lightGrey) end
+  local stale = os.clock() - rxAt > 5
+  local hold, net = rx.hold or 0, (rx.gen or 0) - (rx.inFlow or 0)
+  local bg = (stale or V.alarm()) and colours.red or colours.blue
+  local head = " REACTOR " .. (stale and "NO SIGNAL" or tostring(rx.status or "?"):upper():gsub("_", " "))
+  head = head .. ("    gen %s  in %s  net %s%s RF/t"):format(fmt(rx.gen or 0), fmt(rx.inFlow or 0), net >= 0 and "+" or "", fmt(net))
+  if rx.alarm then head = head .. "    " .. tostring(rx.alarm) end
+  local clock = os.date("%H:%M:%S")
+  put(1, 1, (head .. (" "):rep(W)):sub(1, W), colours.white, bg)
+  put(W - #clock, 1, clock, colours.white, bg)
+  local temp, field = rx.temp or 0, rx.field or 0
+  local g = {
+    { "Temperature", ("%.0f / %.0f C"):format(temp, rx.target or 0), temp / 10000,
+      temp > 8500 and colours.red or temp > (rx.target or 8000) + 100 and colours.orange or colours.lime },
+    { "Field", pct(field), field, field < hold / 2 and colours.red or field < hold * 0.8 and colours.orange or colours.lightBlue },
+    { "Saturation", pct(rx.sat), rx.sat or 0, colours.cyan },
+    { "Fuel used", pct(rx.fuel), rx.fuel or 0, colours.yellow },
+  }
+  if core and core.max and core.max > 0 and os.clock() - coreAt <= 10 then
+    local f = (core.stored or 0) / core.max
+    g[#g + 1] = { "Storage", fmt(core.stored or 0) .. "  " .. pct(f), f, f < 0.1 and colours.red or colours.yellow }
+  end
+  local cw = math.floor((W + 1) / #g) -- one column of gap between gauges
+  for i, v in ipairs(g) do
+    local x, w = (i - 1) * cw + 1, cw - 1
+    put(x, 3, v[1], colours.lightGrey)
+    put(x + math.max(#v[1] + 1, w - #v[2]), 3, v[2], v[4])
+    for y = 4, H do bar(put, x, y, w, v[3], v[4]) end
+  end
+end
+
 -- one row of equal touch buttons. REACTOR goes red while its alarm is up, whichever one is showing.
 function V.tabs(win, y, W, names, active)
   local put = painter(win, 1, 1, W, y)

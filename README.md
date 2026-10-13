@@ -91,7 +91,8 @@ and the reactor carries on.
   and stop. Every monitor on Butler gets `CRAFTING` / `REACTOR` / `CORE` buttons on its bottom row: right-click
   one to switch what that monitor shows. Each monitor remembers its choice.
 - **A screen of its own**: `cookienet get DE_Monitor --boot` on any computer with a monitor and a modem.
-  100 columns or more shows reactor and core side by side, a narrower one has `REACTOR` / `CORE` buttons.
+  It draws on every monitor that computer has, by shape: 100 columns or more shows reactor and core side by
+  side, a narrower one has `REACTOR` / `CORE` buttons, and a 1-block-high strip becomes a row of thick gauges.
   To turn the ME monitor's screen into this: `cookienet rm ME_Monitor`, then the line above.
 
 All of them draw the same screens (`lib/de_view.lua`), laid out for whatever size they get: gauges, temperature
