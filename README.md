@@ -35,7 +35,8 @@ Change later with `cookienet config InSide=left`, then `reboot`.
 `cookienet get DE_Reactor --boot` on one advanced computer. Everything hangs off wired modems (right-click each
 one so it turns red); peripherals cannot go over wireless.
 
-- a modem on any stabilizer or the injector (one is enough, more is fine);
+- modems on the reactor parts: any or all of the stabilizers and the injector. Each is a door to the same core,
+  so with all five on the network a broken part or a pulled modem does not cost control;
 - a modem on **every flux gate**: one gate feeding the injector, one or more draining the stabilizers.
   The reactor parts cannot set any power flow themselves, the gates are the only controls;
 - no other flux or fluid gates on that modem network: every gate that is not the input is treated as an output;
@@ -45,17 +46,37 @@ one so it turns red); peripherals cannot go over wireless.
 Which gate is the input is worked out on the first charge (it is the only one that can move power then) and kept
 in `/.de_reactor_in`. After a reboot the script carries on with whatever the reactor was doing.
 
-It shuts the reactor down by itself when the field drops under half of `TargetField`, the temperature passes
-9000, or `StopAt` % of the fuel is converted.
-
 Settings (`cookienet config TargetTemp=7500`, then reboot): `TargetTemp` 8000, `TargetField` 50, `StopAt` 90,
 `ChargeRate` 5000000, `InGate` auto, `TextScale` 1.
 
-**The injector's supply must not run dry.** With the field at 50% and the input gone, a full reactor has about
-two seconds. The server has `disableLargeReactorBoom=false`, so that is the big explosion. Feed the input gate from
-storage the reactor's own output refills, and keep the reactor and the computer in the same loaded chunks.
 At 8000 C a full core (8 awakened blocks) makes about 5.4M RF/t fresh, rising to roughly 24M as the fuel converts,
 and spends 1.6M to 2.4M of it on the field.
+
+### What blows it up, and what the script does about it
+
+The field reaching 0 above 2000 C is the only way it explodes, and the server has `disableLargeReactorBoom=false`,
+so that is the big one. The script shuts the reactor down (stopping ends all output, the core fills, the drain on
+the field drops to a hundredth) when:
+
+- the field is under half of `TargetField`, the temperature is over 9000, or `StopAt` % of the fuel is converted;
+- the core drains although the gates are throttled: a stabilizer is feeding something that is not a gate;
+- a flux gate leaves or joins the network while it runs, or the input gate is unknown;
+- it has had no control at all for 10 s (parts or gates unreachable).
+
+Three things it cannot save. Get them right before the first start:
+
+1. **Behind every stabilizer: a flux gate, or nothing.** While running, a stabilizer pushes the whole core into
+   the block behind it every tick. A cable, pylon or energy cell there takes it all. Present at start-up this is
+   caught at 2000 C and stopped; wired onto a hot reactor, an unlimited taker empties it in under a second.
+2. **The injector's supply must not run dry.** With the field at 50% and the input gone, a full reactor has about
+   two seconds. Feed the input gate from storage the reactor's own output refills. Half-second cuts are ridden out.
+3. **Keep it all in force-loaded chunks, together:** core, stabilizers, injector, every gate, the computer and
+   whatever powers the input gate (FTB Chunks: claim, then force-load). A reactor that unloads as a whole just
+   freezes, which is safe. One that keeps ticking while its injector, a gate or its power source is unloaded is
+   not. With only the computer gone the gates hold their last flows: fine for days, then it overheats as the fuel
+   runs out.
+
+The computer updates itself from this repo on every boot (`cookienet update`), reactor script included.
 
 Remote: put a wireless or ender modem on the reactor computer and on the Butler computer. Butler gets a `REACTOR`
 tab on its own screen: gauges, five minutes of temperature and field history, the reactor's last log line, and

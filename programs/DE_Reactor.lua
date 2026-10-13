@@ -1,5 +1,6 @@
--- Draconic Evolution reactor controller. One computer on a wired modem network with a reactor part
--- (any stabilizer or the injector) and the flux gates: one feeding the injector, the rest draining the stabilizers.
+-- Draconic Evolution reactor controller. One computer on a wired modem network with the reactor parts
+-- (stabilizers, injector: any or all of them) and the flux gates: one feeding the injector, the rest draining
+-- the stabilizers.
 -- S / X on the computer (or the buttons, also on a monitor) start and stop it. On boot it carries on with
 -- whatever the reactor is doing, so a server restart resumes by itself.
 -- With a wireless or ender modem it also broadcasts its status and takes start/stop over rednet (Butler's
@@ -9,8 +10,13 @@
 --   temperature settles where rise(saturation) = resist(temperature), so one saturation gives one temperature;
 --   output drawn = generation at that saturation, which the core then converges to by itself (no overshoot);
 --   field input = drain / (1 - field), the exact amount that holds the field where it is.
--- The field hitting 0 above 2000 C is the only thing that blows it up. That happens within a second or two
--- of the injector losing power, and no script can save that: feed the input gate from something that cannot run dry.
+-- The field hitting 0 above 2000 C is the only thing that blows it up. Two builds do that faster than any
+-- script can react, so they have to be right before the first start:
+--   the injector losing power: a second or two. Feed the input gate from something that cannot run dry;
+--   a stabilizer with anything but a flux gate (or nothing) behind it: while RUNNING every stabilizer pushes the
+--   whole core into the block behind it, each tick. An unthrottled taker empties the core at once.
+-- Whenever this script cannot see or steer everything, it shuts the reactor down: stopping ends all output,
+-- the core fills, and the drain on the field falls to a hundredth.
 -- @desc Draconic Evolution reactor control: holds temperature and field, auto start/stop, shuts down on trouble
 -- @deps cn_lib
 -- @config TargetTemp|Temperature to hold (8000 = most power before it wastes fuel)|8000
@@ -21,7 +27,7 @@
 -- @config TextScale|Monitor text scale|1
 local cfg = dofile("/lib/cn.lua")
 local TARGET_TEMP = math.max(2500, math.min(8000, tonumber(cfg.TargetTemp) or 8000)) -- above 8000 drain and fuel use go up with the square
-local TARGET_FIELD = math.max(0.2, math.min(0.9, (tonumber(cfg.TargetField) or 50) / 100))
+local TARGET_FIELD = math.max(0.3, math.min(0.9, (tonumber(cfg.TargetField) or 50) / 100))
 local STOP_AT = math.min(0.95, (tonumber(cfg.StopAt) or 90) / 100) -- past 97% it heats up even at full saturation
 local CHARGE = tonumber(cfg.ChargeRate) or 5e6
 local SCALE = tonumber(cfg.TextScale) or 1
@@ -68,16 +74,36 @@ local function log(s)
   logs[41] = nil
 end
 
-local inName = cfg.InGate ~= "auto" and cfg.InGate ~= "" and cfg.InGate or nil
+local pinned = cfg.InGate ~= "auto" and cfg.InGate ~= "" and cfg.InGate or nil -- set by hand: never second-guessed
+local inName = pinned
 if not inName and fs.exists(IN_FILE) then
   local f = fs.open(IN_FILE, "r")
   inName = f.readAll()
   f.close()
 end
 
-local reactor, gates, enabled, mons = nil, {}, {}, {}
+local parts, gates, enabled, mons = {}, {}, {}, {}
+-- Every stabilizer and the injector is a door to the same core: ask whichever answers. One broken part or
+-- pulled modem is then not the end of control.
+local reactor = setmetatable({}, { __index = function(_, method)
+  return function()
+    for _, part in ipairs(parts) do
+      local ok, v = pcall(part[method])
+      if ok and v then return v end
+    end
+  end
+end })
+
+local function forgetInput(why)
+  log(why)
+  inName = nil
+  fs.delete(IN_FILE)
+end
+
+local gateSet, gatesChanged -- the gates as last seen; true when a later look found a different set
 local function attach()
-  reactor = peripheral.find("draconic_reactor") or error("no reactor: put a wired modem on a stabilizer or the injector and right-click it", 0)
+  parts = { peripheral.find("draconic_reactor") }
+  if #parts == 0 then error("no reactor: put a wired modem on a stabilizer or the injector and right-click it", 0) end
   gates, enabled = {}, {}
   local known = false
   for _, name in ipairs(peripheral.getNames()) do
@@ -91,7 +117,13 @@ local function attach()
   if #gates < 2 then
     error(("found %d flux gates on the network, need 2 or more: one feeding the injector, the rest draining the stabilizers"):format(#gates), 0)
   end
-  if inName and not known then error("input gate " .. inName .. " is not on the network (gates: " .. table.concat(gates, ", ") .. ")", 0) end
+  if inName and not known then
+    if pinned then error("input gate " .. inName .. " is not on the network (gates: " .. table.concat(gates, ", ") .. ")", 0) end
+    forgetInput("input gate " .. inName .. " is gone from the network")
+  end
+  local set = table.concat(gates, ",")
+  gatesChanged = gatesChanged or (gateSet ~= nil and gateSet ~= set)
+  gateSet = set
   mons = { peripheral.find("monitor") }
   for _, m in ipairs(mons) do m.setTextScale(SCALE) end
 end
@@ -132,25 +164,47 @@ end
 
 local want     -- "run" / "stop"; nil until the first reading
 local view = {} -- what the screens show
+local lastSt, lastSat = nil, 0
+local holdUntil, holdSat = 0, 0 -- first second of running: outputs shut, see below
+local low = 0                   -- cycles in a row the core sat under its goal without recovering
+local chargeP, chargeAt         -- warm-up progress and when it last moved
+local lastAt                    -- os.clock() of the previous cycle
+
+local function trip(why)
+  if want == "stop" then return end
+  want = "stop"
+  log("SHUTDOWN: " .. why)
+  reactor.stopReactor()
+end
 
 local function step()
-  if not reactor then attach() end
+  if #parts == 0 then attach() end
   local i = reactor.getReactorInfo() or error("reactor core not found (structure incomplete?)", 0)
   local st = i.status
+  local was = lastSt
+  lastSt = st
+  -- Corrections are spread over a second, or over 4 cycles when the computer is being starved and a cycle
+  -- takes longer than its usual 2 ticks: a flow that stands for 2 s must not be sized for a tenth of that.
+  local now = os.clock()
+  local spread = math.max(20, (now - (lastAt or now)) * 20 * 4)
+  lastAt = now
+  if st ~= "warming_up" then chargeP = nil end
   local sat = ratio(i.energySaturation, i.maxEnergySaturation)
   local field = ratio(i.fieldStrength, i.maxFieldStrength)
   local fuel = ratio(i.fuelConversion, i.maxFuelConversion)
   want = want or ((st == "running" or st == "warming_up") and "run" or "stop")
   local inFlow, outFlow, alarm = 0, 0, nil
 
+  -- a gate that dropped off the network is still in the world, passing its last flow where nothing steers it
+  if gatesChanged then
+    gatesChanged = false
+    if st == "running" then trip("the flux gates on the network changed (" .. gateSet .. ")") end
+  end
   if st == "running" and want == "run" then
     local why = field < MIN_FIELD and ("field at %.0f%%"):format(field * 100)
       or i.temperature > MAX_TEMP and ("temperature %.0f"):format(i.temperature)
       or fuel >= STOP_AT and ("fuel %.0f%% converted, refuel"):format(fuel * 100)
-    if why then
-      want = "stop"
-      log("SHUTDOWN: " .. why)
-    end
+    if why then trip(why) end
   end
 
   if st == "invalid" then
@@ -177,21 +231,34 @@ local function step()
       return detect(i)
     else
       inFlow = CHARGE
+      -- a remembered gate that moves nothing for 10 s is the wrong gate (rewired?) or has no power behind it
+      local p = i.fieldStrength + i.energySaturation + i.temperature
+      if p > (chargeP or -1) then chargeP, chargeAt = p, os.clock() end
+      if os.clock() - chargeAt > 10 then
+        if pinned then
+          alarm = "nothing arrives through " .. inName .. ": no power behind it, or it is not the injector's gate"
+        else
+          forgetInput(inName .. " charges nothing, looking for the input gate again")
+          chargeP = nil
+        end
+      end
       -- shield and saturation are at 50% by the time it reaches 2000; refused until then, so just ask again
       if i.temperature >= 2000 then reactor.activateReactor() end
     end
   elseif not inName then
-    -- running without knowing which gate is which: touching them blind could cut the field's supply
+    -- live, and no idea which gate is which: touching them blind could cut the field's supply, so the gates
+    -- are left alone and the reactor is stopped. The gate is found on the next start.
+    if st == "running" then trip("cannot tell which gate feeds the injector") end
     view = { info = i, sat = sat, field = field, fuel = fuel, inFlow = 0,
-      alarm = "which gate feeds the injector? cookienet config InGate=<name> (" .. table.concat(gates, ", ") .. ")" }
+      alarm = "input gate unknown, gates left alone. It is found on the next start (S)." }
     return sleep(1)
   else -- running / stopping
     if st == "running" and want == "stop" then reactor.stopReactor() end
     if st == "stopping" and want == "run" and i.temperature >= 2000 then reactor.activateReactor() end
     -- the core adds input * (1 - field) to the field, so this covers the drain and closes the gap to the
-    -- target over a second (a tenth of that when it is low)
+    -- target over `spread` ticks (a tenth of that when it is low: too much field is harmless)
     local gap = TARGET_FIELD * i.maxFieldStrength - i.fieldStrength
-    inFlow = math.max(0, i.fieldDrainRate + gap / (field < MIN_FIELD and 2 or 20)) / math.max(0.01, 1 - field)
+    inFlow = math.max(0, i.fieldDrainRate + gap / (field < MIN_FIELD and spread / 10 or spread)) / math.max(0.01, 1 - field)
     if st == "running" then
       local conv = fuel * 1.3 - 0.3
       -- above target: aim lower by the same amount. Never aims above the target.
@@ -199,11 +266,25 @@ local function step()
       local goal = satFor(aim, conv)
       local base = math.floor(i.maxEnergySaturation / 1000 * OUTPUT_MULT * 1.5 * 10)
       outFlow = (1 - goal) * math.floor(base * (1 + conv * 2))
-      -- and from what is measured, whatever the model says: never drain towards the goal faster than over a
-      -- second, never below it. An empty core heats by hundreds of degrees a tick.
-      outFlow = math.max(0, math.min(outFlow, i.generationRate + (sat - goal) * i.maxEnergySaturation / 20))
+      -- and from what is measured, whatever the model says: never drain towards the goal faster than over
+      -- `spread` ticks, never below it. An empty core heats by hundreds of degrees a tick.
+      outFlow = math.max(0, math.min(outFlow, i.generationRate + (sat - goal) * i.maxEnergySaturation / spread))
+      -- Is the output really behind the gates? With them shut for the first second the core can only fill
+      -- (warm-up leaves it at exactly 50%), and later it can only sit under its goal while it is recovering.
+      -- Anything else is a stabilizer feeding something that is not a gate.
+      if was ~= "running" then holdUntil, holdSat, low = os.clock() + 1, was == "warming_up" and 0.5 or sat, 0 end
+      local leak
+      if os.clock() < holdUntil then
+        outFlow = 0
+        leak = sat < holdSat - 0.005
+      else
+        low = (sat < goal - 0.03 and sat <= lastSat) and low + 1 or 0
+        leak = low >= 2
+      end
+      if leak then trip("core draining past the gates: a stabilizer has something that is not a flux gate behind it") end
     end
   end
+  lastSat = sat
 
   view = { info = i, sat = sat, field = field, fuel = fuel, inFlow = inFlow, alarm = alarm }
   setFlows(function(n) return n == inName and inFlow or outFlow / (#gates - 1) end)
@@ -296,20 +377,32 @@ local function render()
 end
 
 local function control()
-  local n = 0
+  local n, failing = 0, nil
   while true do
     local ok, err = pcall(step) -- one cycle is 2 ticks: read, then write the gates
-    if not ok then
+    if ok then
+      failing = nil
+    else
       if err == "Terminated" then error(err, 0) end
       -- a part was broken or the modem network changed: the gates keep their last flows (a steady reactor
-      -- stays steady on fixed flows), look for everything again and carry on
+      -- stays steady on fixed flows for a long while), so look for everything again and carry on.
+      -- Still blind after 10 s: stop the reactor through whatever part still answers.
+      failing = failing or os.clock()
       view = { alarm = tostring(err) }
       log(tostring(err))
-      reactor = nil
+      if os.clock() - failing > 10 and want ~= "stop" then
+        want = "stop"
+        log("SHUTDOWN: no control for 10 s")
+        for _, part in ipairs({ peripheral.find("draconic_reactor") }) do
+          local called, done = pcall(part.stopReactor)
+          if called and done then break end
+        end
+      end
+      parts = {}
       sleep(1)
     end
     n = n + 1
-    if n % 3 == 0 or not ok then render() end
+    if n % 3 == 0 or not ok then pcall(render) end
   end
 end
 
@@ -320,8 +413,11 @@ local function input()
     if e == "key" then
       cmd = a == keys.s and "run" or a == keys.x and "stop"
     elseif e == "mouse_click" or e == "monitor_touch" then
-      local W, H = (e == "mouse_click" and term.current() or peripheral.wrap(a)).getSize()
-      cmd = y == H and (x <= math.floor(W / 2) and "run" or "stop")
+      local t = e == "mouse_click" and term.current() or peripheral.wrap(a)
+      if t then
+        local W, H = t.getSize()
+        cmd = y == H and (x <= math.floor(W / 2) and "run" or "stop")
+      end
     elseif e == "rednet_message" and y == PROTO and type(x) == "table" then -- sender, message, protocol
       cmd = (x.cmd == "run" or x.cmd == "stop") and x.cmd
     end
@@ -332,4 +428,10 @@ local function input()
   end
 end
 
-parallel.waitForAny(control, input)
+-- nothing may end this program while the reactor is live: anything unexpected is logged and the loops start again
+while true do
+  local _, err = pcall(parallel.waitForAny, control, input)
+  if err == "Terminated" then error(err, 0) end
+  log("restarted after: " .. tostring(err))
+  sleep(1)
+end

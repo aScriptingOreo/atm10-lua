@@ -114,7 +114,7 @@ class Reactor:
 
 
 PRELUDE = """
-local cfgTable, gateNames, files = ...
+local cfgTable, gateNames, files, LAG, deadParts = ...
 colours = setmetatable({}, { __index = function() return 1 end })
 keys = { s = "s", x = "x" }
 local inputCo, inPar = nil, false
@@ -126,26 +126,54 @@ local function tick(n)
   end
 end
 sleep = function(s) tick(math.max(1, math.floor(s * 20))) end
+-- every peripheral call lands on the server thread: one tick each, LAG ticks on a struggling server
 local reactor = {
-  getReactorInfo = function() local i = py_info() tick(1) return i end,
-  chargeReactor = function() py_cmd("charge") tick(1) end,
-  activateReactor = function() py_cmd("activate") tick(1) end,
-  stopReactor = function() py_cmd("stop") tick(1) end,
+  getReactorInfo = function() local i = py_info() tick(LAG) return i end,
+  chargeReactor = function() py_cmd("charge") tick(LAG) return true end,
+  activateReactor = function() py_cmd("activate") tick(LAG) return true end,
+  stopReactor = function() py_cmd("stop") tick(LAG) return true end,
 }
+local dead = setmetatable({}, { __index = function() return function() error("detached") end end })
 peripheral = {
-  find = function(t) if t == "draconic_reactor" then return reactor end end,
-  getNames = function() local t = { "left", "monitor_9" } for _, n in ipairs(gateNames) do t[#t + 1] = n end return t end,
+  -- four stabilizers and the injector, all on the network; the first deadParts of them broken
+  find = function(t)
+    if t ~= "draconic_reactor" then return end
+    local parts = {}
+    for n = 1, 5 do parts[n] = n <= deadParts and dead or reactor end
+    return table.unpack(parts)
+  end,
+  getNames = function()
+    local t = { "left", "monitor_9" }
+    for _, n in ipairs(gateNames) do if not py_gone(n) then t[#t + 1] = n end end
+    return t
+  end,
   hasType = function(n, t) return t == "flow_gate" and n:find("^flux_gate") ~= nil end,
-  call = function(n, m, v) py_gate(n, m, v) if not inPar then tick(1) end end,
+  call = function(n, m, v)
+    if py_gone(n) then error("detached") end
+    py_gate(n, m, v)
+    if not inPar then tick(LAG) end
+  end,
 }
 parallel = {
-  waitForAll = function(...) inPar = true for _, f in ipairs({ ... }) do f() end inPar = false tick(1) end,
+  waitForAll = function(...)
+    inPar = true
+    local ok, err = true, nil
+    for _, f in ipairs({ ... }) do
+      local o, e = pcall(f) -- like the real one: the others still run, then the error is raised
+      if not o then ok, err = false, e end
+    end
+    inPar = false
+    tick(LAG)
+    if not ok then error(err, 0) end
+  end,
   waitForAny = function(control, input) inputCo = coroutine.create(input) coroutine.resume(inputCo) control() end,
 }
 os.pullEvent = coroutine.yield
+os.clock = function() return py_now() / 20 end -- the sim outruns the wall clock
 fs = {
   exists = function(p) return files[p] ~= nil end,
   open = function(p) return { readAll = function() return files[p] end, write = function(s) files[p] = s end, close = function() end } end,
+  delete = function(p) files[p] = nil end,
 }
 dofile = function() return cfgTable end
 local stub = setmetatable({ getSize = function() return 51, 19 end }, { __index = function() return function() end end })
@@ -155,9 +183,14 @@ window = { create = function() return stub end }
 
 
 def run(ticks, reactor=None, gates=("flux_gate_0", "flux_gate_1"), cfg=None, events=None, power=1e12, saved_in="flux_gate_0",
-        flow=None):
-    """Gate 0 is the real input, the others drain. Returns (reactor, stats)."""
+        flow=None, leak=0, lag=1, gone=None, sink=None, dead_parts=0, may_explode=False):
+    """Gate 0 is the real input, the others drain. Returns (reactor, stats).
+
+    power, sink: number or f(tick): RF/t behind the input gate / fraction of the output the far side accepts.
+    leak: RF/t a stabilizer pushes into something that is not a gate. gone: {gate: tick it leaves the network}.
+    """
     r = reactor or Reactor()
+    gone = gone or {}
     flow = flow or {g: {"flow": 0, "on": False} for g in gates}
     events = events or {}
     st = {"t": 0, "max_temp": 0.0, "min_field": 1.0, "min_sat": 1.0, "ran": 0, "settled": None}
@@ -165,17 +198,21 @@ def run(ticks, reactor=None, gates=("flux_gate_0", "flux_gate_1"), cfg=None, eve
     def py_tick():
         st["t"] += 1
         if st["t"] > ticks: return "END"
+        t = st["t"]
         for name, g in flow.items():
             f = g["flow"] if g["on"] else 0
-            if name == gates[0]: r.inject(min(f, power))
-            else: r.extract(f)
+            if name == gates[0]: r.inject(min(f, power(t) if callable(power) else power))
+            else: r.extract(int(f * (sink(t) if sink else 1)))
+        r.extract(leak(t) if callable(leak) else leak)
         r.tick()
         if r.state == "running":
             st["ran"] += 1
             st["max_temp"] = max(st["max_temp"], r.temp)
             st["min_field"] = min(st["min_field"], r.shield / r.max_shield)
             st["min_sat"] = min(st["min_sat"], r.sat / r.max_sat)
-        assert r.state != "beyond_hope", f"exploded at tick {st['t']}: {r.info()}"
+        if r.state == "beyond_hope":
+            assert may_explode, f"exploded at tick {st['t']}: {r.info()}"
+            return "END"
         return events.get(st["t"])
 
     def py_gate(name, method, v):
@@ -188,11 +225,13 @@ def run(ticks, reactor=None, gates=("flux_gate_0", "flux_gate_1"), cfg=None, eve
     lua = lupa.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     g.py_tick, g.py_gate = py_tick, py_gate
+    g.py_gone = lambda n: n in gone and st["t"] >= gone[n]
+    g.py_now = lambda: st["t"]
     g.py_info = lambda: lua.table_from(r.info())
     g.py_cmd = lambda c: getattr(r, c)()
     files = lua.table_from({"/.de_reactor_in": saved_in} if saved_in else {})
     lua.execute("local f = ... ; _G.__pre = load(f)", PRELUDE)
-    g.__pre(lua.table_from(cfg or {}), lua.table_from(list(gates)), files)
+    g.__pre(lua.table_from(cfg or {}), lua.table_from(list(gates)), files, lag, dead_parts)
     try:
         lua.execute(SCRIPT)
     except lupa.LuaError as e:
@@ -239,11 +278,14 @@ def test_finds_input_gate():
     assert st["flow"]["flux_gate_2"]["flow"] == st["flow"]["flux_gate_4"]["flow"] > 0
 
 
-def test_unknown_gate_while_running_touches_nothing():
+def test_unknown_gate_while_running():
+    # live, and no record of which gate is the input: the gates are not touched, the reactor is stopped
     r, st = run(6000, events={5: "s"})
     before = {k: dict(v) for k, v in st["flow"].items()}
-    r, st = run(400, reactor=r, saved_in=None, flow=st["flow"])
-    assert st["flow"] == before and r.state == "running", st["flow"]
+    r, st = run(300, reactor=r, saved_in=None, flow=st["flow"])
+    assert st["flow"] == before and r.state == "stopping", (st["flow"], r.state)
+    r, st = run(10000, reactor=r, saved_in=None, flow=st["flow"])
+    assert r.state in ("cooling", "cold"), r.state
 
 
 def test_no_power_never_activates():
@@ -290,6 +332,103 @@ def test_weak_input():
     # 1.2x the drain cannot hold 25%: it shuts down, and the drain falling as the core fills saves it
     r, st = run(12000, reactor=r, power=need * 1.2, flow=st["flow"])
     assert r.state in ("cooling", "cold"), r.state
+
+
+def test_wrong_saved_gate_is_found_again():
+    # the remembered input gate is really an output (gates were rewired): nothing charges, so it looks again
+    r, st = run(9000, gates=("flux_gate_3", "flux_gate_1"), events={5: "s"}, saved_in="flux_gate_1")
+    assert st["files"]["/.de_reactor_in"] == "flux_gate_3" and r.state == "running" and 7900 < r.temp < 8010, (st["files"], r.state)
+
+
+def test_broken_parts_do_not_matter():
+    r, st = run(8000, events={5: "s"}, dead_parts=3)
+    assert r.state == "running" and 7900 < r.temp < 8010, (r.state, r.temp)
+
+
+def test_laggy_server():
+    # every call takes a second instead of a tick: a 2 s control cycle
+    for lag in (5, 20):
+        r, st = run(20000, reactor=Reactor(conv=0.5), events={5: "s"}, lag=lag)
+        assert r.state == "running" and 7900 < r.temp < 8010 and st["max_temp"] < 8100 and st["min_field"] > 0.4, (lag, r.temp, st)
+        print(f"lag {lag} ticks per call: peak {st['max_temp']:.0f} C, lowest field {st['min_field']:.1%}")
+
+
+def test_reboots_at_any_moment():
+    # the computer dies and comes back at random points of a start-up; gates keep whatever was last written
+    rng = random.Random(7)
+    for _ in range(25):
+        r, flow, left = Reactor(conv=rng.choice((0.0, 0.5, 0.85))), None, 9000
+        first = True
+        while left > 0:
+            n = min(left, rng.randint(20, 1500))
+            r, st = run(n, reactor=r, flow=flow, events={5: "s"} if first else None)
+            flow, left, first = st["flow"], left - n, False
+            assert st["max_temp"] < 8100 and (st["ran"] == 0 or st["min_field"] > 0.4), st
+        r, st = run(4000, reactor=r, flow=flow)  # each restart shuts the outputs for a second: let it settle
+        assert r.state == "running" and 7900 < r.temp < 8010, (r.state, r.temp)
+
+
+def test_brownouts():
+    # the injector's supply cuts out for up to half a second, every few seconds, for ever
+    rng = random.Random(3)
+    cut = set()
+    for start in range(3000, 20000, 60):
+        cut.update(range(start, start + rng.randint(1, 10)))
+    r, st = run(20000, events={5: "s"}, power=lambda t: 0 if t in cut else 1e12)
+    assert r.state == "running" and st["min_field"] > 0.3, (r.state, st)
+    print(f"brownouts: lowest field {st['min_field']:.1%}")
+
+
+def test_output_blocked_and_released():
+    # storage full for a while (nothing leaves), then it takes everything again
+    r, st = run(16000, events={5: "s"}, sink=lambda t: 0 if 6000 <= t < 9000 or t % 400 < 100 else 1)
+    assert r.state == "running" and st["max_temp"] < 8100 and st["min_sat"] > 0.10, (r.temp, st)
+
+
+def test_gate_leaves_the_network():
+    # an output gate drops off the modem network mid-run. It is still in the world passing its last flow,
+    # which nothing steers any more: shut down at once
+    r, st = run(16000, gates=("flux_gate_0", "flux_gate_1", "flux_gate_2"), events={5: "s"}, gone={"flux_gate_2": 6000})
+    assert r.state in ("cooling", "cold") and st["max_temp"] < 8100, (r.state, st)
+    # the input gate drops off: it holds its last flow, and the reactor is shut down rather than run blind
+    r, st = run(16000, events={5: "s"}, gone={"flux_gate_0": 6000})
+    assert r.state in ("cooling", "cold"), r.state
+    # down to one gate: no control at all for 10 s, shut down
+    r, st = run(16000, gates=("flux_gate_0", "flux_gate_1", "flux_gate_2"), events={5: "s"},
+                gone={"flux_gate_1": 6000, "flux_gate_2": 6000})
+    assert r.state in ("cooling", "cold"), r.state
+
+
+def test_stabilizer_leak():
+    # A stabilizer feeds something that is not a gate. Present from the start, any size: the first second of
+    # running has the gates shut, the core is seen draining anyway, and it is stopped while still near 2000 C.
+    # (A trickle the gates can make up for is simply absorbed.)
+    for conv in (0.0, 0.8):
+        for leak in (1e6, 4e6, 2e7, 1e8, 1e18):
+            r, st = run(12000, reactor=Reactor(conv=conv), events={5: "s"}, leak=leak)
+            assert st["max_temp"] < 8400 and st["min_field"] > 0.45, (conv, leak, st)
+            assert leak < 4e6 or (r.state != "running" and st["max_temp"] < 5100), (conv, leak, r.state, st)
+    # Appearing at 8000 C (someone wires up a stabilizer on a live reactor): a limited taker is survived...
+    r, st = run(16000, events={5: "s"}, leak=lambda t: 2e7 if t > 7000 else 0)
+    assert r.state in ("cooling", "cold"), r.state
+    # ...an unlimited one empties the hot core in one tick and nothing can catch that.
+    r, st = run(9000, events={5: "s"}, leak=lambda t: 1e18 if t > 7000 else 0, may_explode=True)
+    assert r.state == "beyond_hope" and st["t"] < 7100
+    print(f"unlimited taker on a hot reactor: gone {st['t'] - 7000} ticks later")
+
+
+def test_dead_computer():
+    # script gone, gates frozen at their last flows, nobody watching, fuel at 300x so hours pass in seconds.
+    # It runs on for a long time and then it does blow up: this is why the chunk has to stay loaded.
+    r, st = run(6000, reactor=Reactor(fuel_mult=300), events={5: "s"})
+    flow, start = st["flow"], r.converted / (r.converted + r.reactable)
+    for t in range(400000):
+        r.inject(flow["flux_gate_0"]["flow"])
+        r.extract(flow["flux_gate_1"]["flow"])
+        r.tick()
+        if r.state == "beyond_hope": break
+    used = r.converted / (r.converted + r.reactable)
+    print(f"dead computer: frozen at {start:.0%} fuel used, {'explodes' if r.state == 'beyond_hope' else 'still fine'} at {used:.0%}")
 
 
 if __name__ == "__main__":
