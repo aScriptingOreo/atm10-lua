@@ -1,6 +1,6 @@
 """Regenerate packages.json from `-- @` headers in cookienet.lua, lib/*.lua, programs/*.lua.
 
-Header lines (first 20 lines of a file):
+Header lines (in the comment block the file opens with):
   -- @name <pkg>                      default: file name without .lua
   -- @desc <text>
   -- @deps <pkg> [<pkg>...]
@@ -18,7 +18,9 @@ for f in files:
     rel = f.relative_to(root).as_posix()
     p = {"files": [rel]}
     name = f.stem
-    for line in f.read_text(encoding="utf-8").splitlines()[:20]:
+    for line in f.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("--"):
+            break  # header = the comment block the file opens with, however long
         if not line.startswith("-- @"):
             continue
         tag, _, val = line[4:].partition(" ")
