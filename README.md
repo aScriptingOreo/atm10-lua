@@ -57,6 +57,11 @@ storage the reactor's own output refills, and keep the reactor and the computer 
 At 8000 C a full core (8 awakened blocks) makes about 5.4M RF/t fresh, rising to roughly 24M as the fuel converts,
 and spends 1.6M to 2.4M of it on the field.
 
+Remote: put a wireless or ender modem on the reactor computer and on the Butler computer. Butler gets a `REACTOR`
+tab with the live numbers, the reactor's log and `S` / `X` to start and stop it. Control stays on the reactor
+computer: if the link drops the tab says NO SIGNAL and the reactor carries on. Anyone in modem range who sends
+on rednet protocol `de_reactor` can start or stop it too.
+
 `python tools/test_de_reactor.py` (needs `pip install lupa`) runs the script against a port of the reactor's tick.
 
 ## ME monitor

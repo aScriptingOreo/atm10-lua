@@ -1,6 +1,7 @@
 -- Butler: ME system manager. Computer next to an ME Bridge, advanced monitor on any side (optional).
 -- Keeps items stocked: autocrafts anything below its keep count.
 -- Computer screen: LOG, STOCK (edit the rules), MANAGE (type to search craftable items, pick one, type how many).
+-- With a modem and a DE_Reactor computer in range: REACTOR tab, its status and start/stop.
 -- Monitor: read-only crafting dashboard.
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
 -- @desc ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor
@@ -388,8 +389,18 @@ local asking                          -- rule being given a keep count: { id, la
 local note                            -- last thing that happened
 local scur, stop, armed = 1, 0, false -- STOCK: highlighted rule, rows scrolled, Del pressed once
 local LIST_Y = 5                      -- MANAGE: first result row
-local TABS = { "LOG", "STOCK", "MANAGE" }
-local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "LOG" }
+local TABS = { "LOG", "STOCK", "MANAGE", "REACTOR" }
+local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "REACTOR", REACTOR = "LOG" }
+-- REACTOR: what the DE_Reactor computer last broadcast. Butler only shows it and sends start/stop;
+-- the reactor is controlled over there and does not care whether this link is up.
+local RPROTO = "de_reactor"
+local hasModem = false
+peripheral.find("modem", function(name) rednet.open(name) hasModem = true end)
+local rx, rxAt -- last status, os.clock() when it came in
+local RSTATUS = {
+  cold = colours.lightGrey, warming_up = colours.yellow, running = colours.lime, stopping = colours.orange,
+  cooling = colours.lightBlue,
+}
 
 local function tput(x, y, s, fg, bg)
   term.setCursorPos(x, y)
@@ -450,6 +461,32 @@ local function drawStock()
   end
 end
 
+local function drawReactor()
+  if not hasModem then return tput(1, 3, "no modem on this computer", colours.red) end
+  if not rx or os.clock() - rxAt > 5 then
+    return tput(1, 3, rx and "NO SIGNAL from the reactor computer" or "waiting for the reactor computer...", colours.red)
+  end
+  local function row(y, label, text, col)
+    tput(1, y, label, colours.lightGrey)
+    tput(13, y, text:sub(1, TW - 12), col)
+  end
+  local pct = function(v) return ("%.1f%%"):format((v or 0) * 100) end
+  local st = tostring(rx.status or "?")
+  row(2, "Status", st:upper():gsub("_", " ") .. (rx.want and "   (asked to " .. rx.want .. ")" or ""), RSTATUS[st] or colours.red)
+  row(3, "Temperature", ("%.0f / %.0f C"):format(rx.temp or 0, rx.target or 0), (rx.temp or 0) > 8500 and colours.red or colours.white)
+  row(4, "Field", pct(rx.field) .. "  hold " .. pct(rx.hold), (rx.field or 0) < (rx.hold or 0) / 2 and colours.red or colours.white)
+  row(5, "Saturation", pct(rx.sat))
+  row(6, "Fuel used", pct(rx.fuel) .. "  stop at " .. pct(rx.stopAt))
+  local net = (rx.gen or 0) - (rx.inFlow or 0)
+  row(7, "Power", ("gen %s  in %s  net %s RF/t"):format(fmt(rx.gen or 0), fmt(rx.inFlow or 0), fmt(net)), net >= 0 and colours.lime or colours.red)
+  if rx.alarm then tput(1, 8, tostring(rx.alarm):sub(1, TW), colours.white, colours.red) end
+  for n = 1, TH - 10 do
+    local l = type(rx.log) == "table" and rx.log[n]
+    if l then tput(1, 8 + n, tostring(l):sub(1, TW), colours.lightGrey) end
+  end
+  tput(1, TH, (note or "S start  X stop"):sub(1, TW), note and colours.lime or colours.lightGrey)
+end
+
 function drawTerm()
   term.setBackgroundColour(colours.black)
   term.clear()
@@ -474,6 +511,7 @@ function drawTerm()
     return
   end
   if view == "STOCK" then return drawStock() end
+  if view == "REACTOR" then return drawReactor() end
   local prompt, text = "Search: ", query
   if asking then
     prompt, text = "Keep at least (0 removes): ", asking.text
@@ -614,6 +652,12 @@ local function typed(s)
   elseif view == "MANAGE" then
     query = query .. s
     search()
+  elseif view == "REACTOR" and hasModem then
+    local cmd = ({ s = "run", x = "stop" })[s:lower()]
+    if cmd then
+      rednet.broadcast({ cmd = cmd }, RPROTO)
+      note = "sent: " .. (cmd == "run" and "start" or "stop")
+    end
   end
 end
 
@@ -624,7 +668,7 @@ local function pressed(k)
     if asking then asking = nil else openView(NEXT[view]) end
     return
   end
-  if view == "LOG" then return end
+  if view == "LOG" or view == "REACTOR" then return end
   if asking then
     if k == keys.backspace then
       asking.text, asking.fresh = asking.fresh and "" or asking.text:sub(1, -2), false
@@ -732,6 +776,14 @@ local function syncLoop()
   end
 end
 
+local function reactorLoop()
+  while true do
+    local _, msg = rednet.receive(RPROTO, 5) -- the timeout redraws too, so a dead link shows as NO SIGNAL
+    if type(msg) == "table" and msg.status then rx, rxAt = msg, os.clock() end
+    if view == "REACTOR" then drawTerm() end
+  end
+end
+
 local function uiLoop()
   while true do
     local ev, a, b, c = os.pullEvent()
@@ -754,6 +806,7 @@ drawTerm()
 draw()
 local loops = { stockLoop, cpuLoop, jobLoop, uiLoop }
 if SYNC > 0 then loops[#loops + 1] = syncLoop end
+if hasModem then loops[#loops + 1] = reactorLoop end
 local ok, err = pcall(parallel.waitForAny, table.unpack(loops))
 -- leave a clean prompt behind on Ctrl+T or a crash
 term.setBackgroundColour(colours.black)

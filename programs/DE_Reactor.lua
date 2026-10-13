@@ -2,6 +2,8 @@
 -- (any stabilizer or the injector) and the flux gates: one feeding the injector, the rest draining the stabilizers.
 -- S / X on the computer (or the buttons, also on a monitor) start and stop it. On boot it carries on with
 -- whatever the reactor is doing, so a server restart resumes by itself.
+-- With a wireless or ender modem it also broadcasts its status and takes start/stop over rednet (Butler's
+-- REACTOR tab). That link is only a remote: all control stays on this computer.
 --
 -- The numbers below are the reactor's own (TileReactorCore, Draconic Evolution 3.1.4.633), not tuning:
 --   temperature settles where rise(saturation) = resist(temperature), so one saturation gives one temperature;
@@ -27,6 +29,10 @@ local MAX_TEMP = 9000              -- shutdown above this (drain is already 3.5x
 local MIN_FIELD = TARGET_FIELD / 2 -- shutdown below this
 local OUTPUT_MULT = 1.0            -- reactorOutputMultiplier in the server's config/brandon3055/DraconicEvolution.cfg
 local IN_FILE = "/.de_reactor_in"  -- the input gate found on the first charge; delete to find it again
+-- ponytail: one fixed protocol; add a name to it (like reactor:<name>) if two reactors share modem range
+local PROTO = "de_reactor"
+local remote = false
+peripheral.find("modem", function(name) rednet.open(name) remote = true end)
 
 -- saturation (0..1) at which the temperature settles at `temp`, for conversion level `conv` (-0.3 fresh .. 1 spent)
 local function satFor(temp, conv)
@@ -278,6 +284,15 @@ end
 local function render()
   pcall(draw, term.current())
   for _, m in ipairs(mons) do pcall(draw, m) end -- a monitor broken mid-frame is not the reactor's problem
+  if remote then
+    local i, l = view.info or {}, {}
+    for n = 1, 8 do l[n] = logs[n] and logs[n].t .. " " .. logs[n].s end
+    rednet.broadcast({
+      status = i.status, temp = i.temperature, target = TARGET_TEMP, field = view.field, hold = TARGET_FIELD,
+      sat = view.sat, fuel = view.fuel, stopAt = STOP_AT, gen = i.generationRate, inFlow = view.inFlow,
+      alarm = view.alarm, want = want, log = l,
+    }, PROTO)
+  end
 end
 
 local function control()
@@ -307,6 +322,8 @@ local function input()
     elseif e == "mouse_click" or e == "monitor_touch" then
       local W, H = (e == "mouse_click" and term.current() or peripheral.wrap(a)).getSize()
       cmd = y == H and (x <= math.floor(W / 2) and "run" or "stop")
+    elseif e == "rednet_message" and y == PROTO and type(x) == "table" then -- sender, message, protocol
+      cmd = (x.cmd == "run" or x.cmd == "stop") and x.cmd
     end
     if cmd and cmd ~= want then
       want = cmd

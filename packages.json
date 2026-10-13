@@ -56,11 +56,6 @@
         "key": "InGate",
         "prompt": "Flux gate feeding the injector (auto = found on the first charge)",
         "default": "auto"
-      },
-      {
-        "key": "TextScale",
-        "prompt": "Monitor text scale",
-        "default": "1"
       }
     ],
     "files": [
