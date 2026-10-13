@@ -2,6 +2,7 @@
 -- Keeps items stocked: autocrafts anything below its keep count.
 -- Computer screen: LOG, STOCK (edit the rules), MANAGE (type to search craftable items, pick one, type how many).
 -- With a modem and a DE_Reactor computer in range: REACTOR tab, its status, history and start/stop.
+-- A DE_Core computer in range adds the energy core's level and flow to that tab.
 -- A speaker (any side or on a wired modem) sounds when the reactor is in trouble or stops answering.
 -- Monitor: read-only crafting dashboard.
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
@@ -399,6 +400,8 @@ local hasModem = false
 peripheral.find("modem", function(name) rednet.open(name) hasModem = true end)
 local speaker = peripheral.find("speaker")
 local rx, rxAt -- last status, os.clock() when it came in
+local CPROTO = "de_core"
+local core, coreAt -- last energy core readout (DE_Core), os.clock() when it came in
 local hist = {}                 -- { temp, field } every HIST_EVERY seconds, newest last
 local HIST_EVERY = 6            -- 51 columns of it = the last 5 minutes
 local tripAt, muted = -math.huge, false -- when the reactor last shut itself down; M pressed
@@ -491,8 +494,27 @@ local function graph(y, rows, key, max, colOf)
   end
 end
 
+local function span(sec)
+  return ("%dh%02dm"):format(math.floor(sec / 3600), math.floor(sec % 3600 / 60))
+end
+
+-- energy core: level, net flow, and how long until it is full or empty at that rate
+local function drawCore(y)
+  if not core then return end
+  tput(1, y, "Storage", colours.lightGrey)
+  if os.clock() - coreAt > 10 then return tput(13, y, "no signal from the core computer", colours.red) end
+  local have, max, net = core.stored or 0, core.max, (core.input or 0) - (core.output or 0)
+  local s = fmt(have) .. (max and "/" .. fmt(max) .. (" %.1f%%"):format(have / max * 100) or " RF")
+  s = s .. "  " .. (net >= 0 and "+" or "") .. fmt(net) .. "/t"
+  if net > 0 and max then s = s .. "  full " .. span((max - have) / net / 20) end
+  if net < 0 then s = s .. "  empty " .. span(have / -net / 20) end
+  local low = max and have / max < 0.1
+  tput(13, y, s:sub(1, TW - 12), low and colours.red or net < 0 and colours.orange or colours.white)
+end
+
 local function drawReactor()
   if not hasModem then return tput(1, 3, "no modem on this computer", colours.red) end
+  drawCore(TH - 2)
   if not rx then return tput(1, 3, "waiting for the reactor computer...", colours.lightGrey) end
   local BAR = 34 -- gauges start here
   local function row(y, label, text, col, frac)
@@ -523,9 +545,9 @@ local function drawReactor()
     tput(1, 8, tostring(rx.alarm):sub(1, TW), colours.white, colours.red)
   end
   tput(1, 9, "Temperature, last 5 min (top = 10000 C)", colours.lightGrey)
-  graph(10, 4, "temp", 10000, tempCol)
-  tput(1, 14, "Field (top = 100%)", colours.lightGrey)
-  graph(15, 3, "field", 1, fieldCol)
+  graph(10, 3, "temp", 10000, tempCol)
+  tput(1, 13, "Field (top = 100%)", colours.lightGrey)
+  graph(14, 3, "field", 1, fieldCol)
   local last = type(rx.log) == "table" and rx.log[1]
   if last then tput(1, TH - 1, tostring(last):sub(1, TW), tostring(last):find("SHUTDOWN") and colours.orange or colours.lightGrey) end
   local help = "S start  X stop" .. (speaker and (muted and "  M unmute" or "  M mute alarm") or "")
@@ -827,8 +849,10 @@ end
 local function reactorLoop()
   local lastTop, sampled = nil, -math.huge
   while true do
-    local _, msg = rednet.receive(RPROTO, 5) -- the timeout redraws too, so a dead link shows as NO SIGNAL
-    if type(msg) == "table" and msg.status then
+    local _, msg, proto = rednet.receive(nil, 5) -- the timeout redraws too, so a dead link shows as NO SIGNAL
+    if proto == CPROTO and type(msg) == "table" then
+      core, coreAt = msg, os.clock()
+    elseif proto == RPROTO and type(msg) == "table" and msg.status then
       rx, rxAt = msg, os.clock()
       local top = type(msg.log) == "table" and msg.log[1] or ""
       -- a new SHUTDOWN line = it just tripped. Not on the first message: that line may be hours old.

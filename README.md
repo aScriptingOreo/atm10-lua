@@ -83,6 +83,10 @@ tab on its own screen: gauges, five minutes of temperature and field history, th
 `S` / `X` to start and stop it. Control stays on the reactor computer: if the link drops the tab says NO SIGNAL
 and the reactor carries on.
 
+Energy core: `cookienet get DE_Core --boot` on a computer touching one of the core's energy pylons (no wired
+modem needed when it touches; one pylon is enough, they all read the same core), with a wireless or ender modem on
+another side. The `REACTOR` tab gains a `Storage` line: level, net RF/t, and time until full or empty.
+
 Alarm: the `REACTOR` tab turns red from any tab, and a speaker on the Butler computer (any side, or on its wired
 network) sounds. Fast two-tone = field under half its target, over 8500 C, or meltdown. One beep every 2 s = it
 shut itself down (15 s), or the reactor computer went quiet while the reactor was live. `M` in the tab mutes

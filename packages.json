@@ -26,6 +26,13 @@
     ],
     "main": "programs/Butler.lua"
   },
+  "DE_Core": {
+    "desc": "Draconic energy core readout: stored energy and flow, broadcast for Butler's REACTOR tab",
+    "files": [
+      "programs/DE_Core.lua"
+    ],
+    "main": "programs/DE_Core.lua"
+  },
   "DE_Reactor": {
     "desc": "Draconic Evolution reactor control: holds temperature and field, auto start/stop, shuts down on trouble",
     "deps": [
