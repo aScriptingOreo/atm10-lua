@@ -1,13 +1,16 @@
--- Draconic reactor and energy core screens, shared by Butler and DE_Monitor.
+-- Remote screens shared by Butler, DE_Monitor and Pocket: Draconic reactor, energy core, weather machine.
 -- Usage: local V = dofile("/lib/de_view.lua")
--- It listens to what DE_Reactor and DE_Core broadcast and draws it into any region of any terminal or monitor,
--- laid out for the size it is given. Display and start/stop only: the reactor is controlled on its own computer.
+-- It listens to what DE_Reactor, DE_Core, Weather and Butler broadcast and draws it into any region of any
+-- terminal or monitor, laid out for the size it is given. Display and orders only: every machine is run by
+-- its own computer and does not care whether anything is listening.
 -- @name de_view
--- @desc reactor / energy core screens for Butler and DE_Monitor (auto-installed as a dependency)
-local V = { RPROTO = "de_reactor", CPROTO = "de_core", muted = false }
+-- @desc reactor / energy core / weather screens for Butler, DE_Monitor and Pocket (auto-installed as a dependency)
+local V = { RPROTO = "de_reactor", CPROTO = "de_core", WPROTO = "weather", BPROTO = "butler", muted = false }
 
 local rx, rxAt     -- last reactor status, os.clock() when it came in
 local core, coreAt -- last energy core readout
+local sky, skyAt   -- last weather machine status: { actions = { names }, last, keep, canKeep }
+-- V.butler / V.butlerAt: Butler's own summary, kept for whoever draws it (Pocket)
 local hist, chist = {}, {} -- { temp, field } / { level }, one every HIST_EVERY seconds, newest last
 local HIST_EVERY, KEEP = 6, 400
 local sampled, csampled = -math.huge, -math.huge
@@ -58,6 +61,12 @@ function V.feed(proto, msg)
       chist[#chist + 1] = { level = msg.stored or 0 }
       if #chist > KEEP then table.remove(chist, 1) end
     end
+    return true
+  elseif proto == V.WPROTO and type(msg.actions) == "table" then
+    sky, skyAt = msg, now
+    return true
+  elseif proto == V.BPROTO then
+    V.butler, V.butlerAt = msg, now
     return true
   end
   return false
@@ -171,12 +180,13 @@ function V.reactor(win, x0, y0, W, H)
   put(13, y, st:upper():gsub("_", " ") .. (rx.want and wide and "   (asked to " .. rx.want .. ")" or ""), RSTATUS[st] or colours.red)
   y = y + (tall and 2 or 1)
   gauge("Temperature", ("%.0f / %.0f C"):format(temp, rx.target or 0), tempCol(temp), temp / 10000)
-  gauge("Field", pct(field) .. ("  hold %.0f%%"):format(hold * 100), fieldCol(field), field)
+  local roomy = W >= 30 -- a pocket computer is 26 wide
+  gauge("Field", pct(field) .. (roomy and "  hold %.0f%%" or " of %.0f%%"):format(hold * 100), fieldCol(field), field)
   gauge("Saturation", pct(rx.sat), colours.cyan, rx.sat or 0)
-  gauge("Fuel used", pct(rx.fuel) .. ("  stop %.0f%%"):format((rx.stopAt or 0) * 100), colours.yellow, rx.fuel or 0)
+  gauge("Fuel used", pct(rx.fuel) .. (roomy and "  stop %.0f%%" or " of %.0f%%"):format((rx.stopAt or 0) * 100), colours.yellow, rx.fuel or 0)
   local gen, inFlow = rx.gen or 0, rx.inFlow or 0
   local net = gen - inFlow
-  local power = (net >= 0 and "net +" or "net ") .. fmt(net) .. " RF/t"
+  local power = (net >= 0 and "net +" or "net ") .. fmt(net) .. (W >= 30 and " RF/t" or "/t")
   if wide then power = ("gen %s  in %s  "):format(fmt(gen), fmt(inFlow)) .. power end
   put(1, y, "Power", colours.lightGrey)
   put(13, y, power, net >= 0 and colours.lime or colours.red)
@@ -192,10 +202,10 @@ function V.reactor(win, x0, y0, W, H)
   local rows = H - y + 1 - logs - 2 -- graph rows, less the two titles
   if rows >= 4 then
     local tr = math.ceil(rows / 2)
-    put(1, y, "Temperature, " .. minutes(W) .. " (top = 10000 C)", colours.lightGrey)
+    put(1, y, roomy and "Temperature, " .. minutes(W) .. " (top = 10000 C)" or "Temp, " .. minutes(W), colours.lightGrey)
     graph(put, y + 1, tr, W, hist, "temp", 10000, tempCol)
     y = y + 1 + tr
-    put(1, y, "Field (top = 100%)", colours.lightGrey)
+    put(1, y, roomy and "Field (top = 100%)" or "Field", colours.lightGrey)
     graph(put, y + 1, rows - tr, W, hist, "field", 1, fieldCol)
     y = y + 1 + rows - tr
   end
@@ -221,7 +231,11 @@ function V.core(win, x0, y0, W, H)
     put(13, y, text, c)
     y = y + 1
   end
-  row("Stored", fmt(have) .. (max and " / " .. fmt(max) or "") .. " RF" .. (frac and "   " .. pct(frac) or "  (no limit)"), col)
+  if W >= 40 then
+    row("Stored", fmt(have) .. (max and " / " .. fmt(max) or "") .. " RF" .. (frac and "   " .. pct(frac) or "  (no limit)"), col)
+  else
+    row("Stored", (frac and pct(frac) .. "  " or "") .. fmt(have), col)
+  end
   if frac then
     for r = 0, tall and 1 or 0 do bar(put, 1, y + r, W, frac, col) end
     y = y + (tall and 3 or 1)
@@ -243,8 +257,42 @@ function V.core(win, x0, y0, W, H)
       top = 1
       for c = math.max(1, #chist - W + 1), #chist do top = math.max(top, chist[c].level) end
     end
-    put(1, y, "Level, " .. minutes(W) .. " (top = " .. fmt(top) .. ")", colours.lightGrey)
+    put(1, y, "Level, " .. minutes(W) .. (W >= 40 and " (top = " .. fmt(top) .. ")" or ""), colours.lightGrey)
     graph(put, y + 1, rows, W, chist, "level", top, function() return col end)
+  end
+end
+
+-- weather machine: its actions on rows 2.., what it did last, and whether it is still there
+function V.sky(win, x0, y0, W, H)
+  local put = painter(win, x0, y0, W, H)
+  if not sky then return put(1, 2, "waiting for the weather machine...", colours.lightGrey) end
+  for i, name in ipairs(sky.actions) do
+    if i + 1 > H - 2 then break end
+    put(1, i + 1, ("%2.0f "):format(i), colours.yellow)
+    put(4, i + 1, tostring(name))
+  end
+  put(1, H - 1, "last: " .. tostring(sky.last), colours.lightGrey)
+  if os.clock() - skyAt > 15 then put(1, H, "NO SIGNAL from the weather machine", colours.white, colours.red) end
+end
+-- the keys V.skyKey understands, for a help line W characters wide
+function V.skyHelp(W)
+  if not sky then return "" end
+  local keep = sky.keep and "ON" or "off"
+  if W < 40 then return "1-9 fire" .. (sky.canKeep and "  K clear: " .. keep or "") end
+  return "number or click fires" .. (sky.canKeep and "   K keep clear: " .. keep or "")
+end
+-- fire action i (a click on region row r is action r - 1); returns what to tell the user, nil if there is none
+function V.skyFire(i)
+  if not (sky and sky.actions[i]) then return end
+  rednet.broadcast({ fire = i }, V.WPROTO)
+  return "sent: " .. tostring(sky.actions[i])
+end
+-- a typed character: a number fires, K toggles keep-clear; returns what to tell the user
+function V.skyKey(s)
+  if tonumber(s) then return V.skyFire(tonumber(s)) end
+  if s:lower() == "k" and sky and sky.canKeep then
+    rednet.broadcast({ set = not sky.keep }, V.WPROTO)
+    return "sent: keep clear " .. (sky.keep and "off" or "on")
   end
 end
 

@@ -126,6 +126,16 @@
     ],
     "main": "programs/ME_Monitor.lua"
   },
+  "Pocket": {
+    "desc": "Butler on a pocket computer: ME status, reactor, energy core and weather from anywhere (ender modem)",
+    "deps": [
+      "de_view"
+    ],
+    "files": [
+      "programs/Pocket.lua"
+    ],
+    "main": "programs/Pocket.lua"
+  },
   "RS_ItemToRedstone": {
     "desc": "Redstone out while an RS item is at/below a count",
     "deps": [
@@ -202,7 +212,7 @@
     ]
   },
   "de_view": {
-    "desc": "reactor / energy core screens for Butler and DE_Monitor (auto-installed as a dependency)",
+    "desc": "reactor / energy core / weather screens for Butler, DE_Monitor and Pocket (auto-installed as a dependency)",
     "files": [
       "lib/de_view.lua"
     ]

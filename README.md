@@ -127,6 +127,19 @@ With a wireless or ender modem, Butler gets a `SKY` tab with the same list and k
 
 Skip 24h does not fit: it runs only while the signal is held, and this sends one-second pulses.
 
+## Pocket
+
+`cookienet get Pocket --boot` on an advanced pocket computer crafted with an **ender modem** (a wireless one
+only reaches a few hundred blocks). It is Butler away from home: four screens, switched with Tab, the arrow keys
+or a tap on the top row.
+
+- `ME`: Butler's status, the rules that are not stocked, the end of its log. `P` pauses or resumes crafting.
+- `REACTOR`, `CORE`, `SKY`: the same screens and keys as Butler's tabs.
+
+Everything it shows is what the home computers broadcast, so for it to work from anywhere each of them (Butler,
+the reactor computer, DE_Core, Weather) needs an ender modem too. Out of range or unloaded just means NO SIGNAL
+and old numbers. Editing stock rules stays on Butler itself.
+
 ## ME monitor
 
 `cookienet get ME_Monitor --boot` on every computer that has an advanced monitor; all of them need a modem.
