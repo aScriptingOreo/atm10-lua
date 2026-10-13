@@ -106,6 +106,27 @@ its wired network) sounds. Fast two-tone = field under half its target, over 850
 
 `python tools/test_de_reactor.py` (needs `pip install lupa`) runs the script against a port of the reactor's tick.
 
+## Weather machine
+
+`cookienet get Weather --boot` on a dedicated computer. It fires Draconic Evolution celestial manipulators.
+
+A manipulator cannot be told what to do by a computer. It does the one thing its GUI redstone mode is set to, when
+a redstone signal arrives. So: one manipulator per action, each with a **Redstone Relay** (CC block) touching it,
+and a wired modem on each relay.
+
+1. Decide the order, e.g. `clear, rain, storm, sunrise, midday, sunset, midnight` (that is the default `Actions`).
+2. Place manipulator + relay pairs. A relay must touch only its own manipulator: it powers all six faces.
+3. **Right-click the relays' modems in that order.** Relays are numbered as they join the network, and the script
+   takes them lowest number first. The computer's screen lists which relay got which name.
+4. In each manipulator's GUI pick the matching redstone mode (`clear` = stop rain).
+5. Power them: 256,000 RF per weather change.
+
+On the computer: a number or a click fires that action, `K` keeps the sky clear (a stop-rain pulse every 30 s,
+which costs nothing while it is dry). A different order or fewer machines: `cookienet config Actions=clear,rain`.
+With a wireless or ender modem, Butler gets a `SKY` tab with the same list and keys.
+
+Skip 24h does not fit: it runs only while the signal is held, and this sends one-second pulses.
+
 ## ME monitor
 
 `cookienet get ME_Monitor --boot` on every computer that has an advanced monitor; all of them need a modem.

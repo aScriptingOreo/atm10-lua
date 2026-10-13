@@ -3,6 +3,7 @@
 -- Computer screen: LOG, STOCK (edit the rules), MANAGE (type to search craftable items, pick one, type how many).
 -- With a modem: REACTOR and CORE tabs show what the DE_Reactor and DE_Core computers broadcast (lib/de_view),
 -- REACTOR can start and stop it. A speaker sounds when the reactor is in trouble or stops answering.
+-- SKY tab: fires the Weather computer's actions (rain, clear, time of day).
 -- Monitors: crafting dashboard; with a modem each one has CRAFTING / REACTOR / CORE buttons on its bottom row.
 -- Rules in programs/Butler.json (this repo) are re-fetched while running: push an edit, no reboot.
 -- @desc ME system manager: keeps items stocked (autocraft), search-to-add on the computer, dashboard on a monitor
@@ -408,8 +409,10 @@ local asking                          -- rule being given a keep count: { id, la
 local note                            -- last thing that happened
 local scur, stop, armed = 1, 0, false -- STOCK: highlighted rule, rows scrolled, Del pressed once
 local LIST_Y = 5                      -- MANAGE: first result row
-local TABS = { "LOG", "STOCK", "MANAGE", "REACTOR", "CORE" }
-local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "REACTOR", REACTOR = "CORE", CORE = "LOG" }
+local TABS = { "LOG", "STOCK", "MANAGE", "REACTOR", "CORE", "SKY" }
+local NEXT = { LOG = "STOCK", STOCK = "MANAGE", MANAGE = "REACTOR", REACTOR = "CORE", CORE = "SKY", SKY = "LOG" }
+local WPROTO = "weather"
+local sky, skyAt -- what the Weather computer last broadcast: { actions = { names }, last, keep, canKeep }
 
 local function tput(x, y, s, fg, bg)
   term.setCursorPos(x, y)
@@ -470,6 +473,26 @@ local function drawStock()
   end
 end
 
+-- SKY: the weather machine's actions. A number or a click fires one over rednet.
+local function drawSky()
+  if not hasModem then return tput(1, 3, "no modem on this computer", colours.red) end
+  if not sky then return tput(1, 3, "waiting for the weather machine...", colours.lightGrey) end
+  for i, name in ipairs(sky.actions) do
+    if i + 2 > TH - 3 then break end
+    tput(1, i + 2, ("%2d "):format(i), colours.yellow)
+    tput(4, i + 2, tostring(name))
+  end
+  tput(1, TH - 2, ("last: " .. tostring(sky.last)):sub(1, TW), colours.lightGrey)
+  if os.clock() - skyAt > 15 then tput(1, TH - 1, "NO SIGNAL from the weather machine", colours.white, colours.red) end
+  local help = "number or click fires" .. (sky.canKeep and "   K keep clear: " .. (sky.keep and "ON" or "off") or "")
+  tput(1, TH, (note or help):sub(1, TW), note and colours.lime or colours.lightGrey)
+end
+local function skyFire(i)
+  if not (sky and sky.actions[i]) then return end
+  rednet.broadcast({ fire = i }, WPROTO)
+  note = "sent: " .. tostring(sky.actions[i])
+end
+
 -- REACTOR / CORE: the shared screen in rows 2 .. TH - 1, the keys on the last row
 local function drawRemote()
   if not hasModem then return tput(1, 3, "no modem on this computer", colours.red) end
@@ -506,6 +529,7 @@ function drawTerm()
   end
   if view == "STOCK" then return drawStock() end
   if view == "REACTOR" or view == "CORE" then return drawRemote() end
+  if view == "SKY" then return drawSky() end
   local prompt, text = "Search: ", query
   if asking then
     prompt, text = "Keep at least (0 removes): ", asking.text
@@ -646,6 +670,13 @@ local function typed(s)
   elseif view == "MANAGE" then
     query = query .. s
     search()
+  elseif view == "SKY" and hasModem and sky then
+    if tonumber(s) then
+      skyFire(tonumber(s))
+    elseif s:lower() == "k" and sky.canKeep then
+      rednet.broadcast({ set = not sky.keep }, WPROTO)
+      note = "sent: keep clear " .. (sky.keep and "off" or "on")
+    end
   elseif (view == "REACTOR" or view == "CORE") and hasModem then
     local cmd = view == "REACTOR" and ({ s = "run", x = "stop" })[s:lower()]
     if cmd then
@@ -664,7 +695,7 @@ local function pressed(k)
     if asking then asking = nil else openView(NEXT[view]) end
     return
   end
-  if view == "LOG" or view == "REACTOR" or view == "CORE" then return end
+  if view == "LOG" or view == "REACTOR" or view == "CORE" or view == "SKY" then return end
   if asking then
     if k == keys.backspace then
       asking.text, asking.fresh = asking.fresh and "" or asking.text:sub(1, -2), false
@@ -700,6 +731,8 @@ local function clicked(x, y)
   elseif view == "MANAGE" and y >= LIST_Y and found[top + y - LIST_Y + 1] then
     cur = top + y - LIST_Y + 1
     choose(found[cur])
+  elseif view == "SKY" then
+    skyFire(y - 2)
   elseif view == "STOCK" and y >= 2 and y <= TH - 2 and stockIds()[stop + y - 1] then
     local i = stop + y - 1
     armed = false
@@ -779,6 +812,13 @@ local function remoteChanged()
     if mo.view ~= "CRAFTING" then drawMon(mo) end
   end
 end
+local function skyLoop()
+  while true do
+    local _, msg = rednet.receive(WPROTO, 10) -- the timeout redraws too: NO SIGNAL
+    if type(msg) == "table" and type(msg.actions) == "table" then sky, skyAt = msg, os.clock() end
+    if view == "SKY" then drawTerm() end
+  end
+end
 local function alarmChanged() -- the red REACTOR tab is on every screen
   drawTerm()
   draw()
@@ -819,6 +859,7 @@ if SYNC > 0 then loops[#loops + 1] = syncLoop end
 if hasModem then
   loops[#loops + 1] = function() V.listen(remoteChanged) end
   loops[#loops + 1] = function() V.alarmLoop(speaker, alarmChanged) end
+  loops[#loops + 1] = skyLoop
 end
 local ok, err = pcall(parallel.waitForAny, table.unpack(loops))
 -- leave a clean prompt behind on Ctrl+T or a crash
