@@ -26,6 +26,48 @@
     ],
     "main": "programs/Butler.lua"
   },
+  "DE_Reactor": {
+    "desc": "Draconic Evolution reactor control: holds temperature and field, auto start/stop, shuts down on trouble",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "TargetTemp",
+        "prompt": "Temperature to hold (8000 = most power before it wastes fuel)",
+        "default": "8000"
+      },
+      {
+        "key": "TargetField",
+        "prompt": "Field % to hold (higher = safer, costs more input)",
+        "default": "50"
+      },
+      {
+        "key": "StopAt",
+        "prompt": "Shut down at this fuel conversion %",
+        "default": "90"
+      },
+      {
+        "key": "ChargeRate",
+        "prompt": "RF/t fed in while warming up",
+        "default": "5000000"
+      },
+      {
+        "key": "InGate",
+        "prompt": "Flux gate feeding the injector (auto = found on the first charge)",
+        "default": "auto"
+      },
+      {
+        "key": "TextScale",
+        "prompt": "Monitor text scale",
+        "default": "1"
+      }
+    ],
+    "files": [
+      "programs/DE_Reactor.lua"
+    ],
+    "main": "programs/DE_Reactor.lua"
+  },
   "ME_Monitor": {
     "desc": "Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids",
     "deps": [

@@ -30,6 +30,35 @@ cookienet boot <pkg|off>          set or clear the startup program
 reactor to run several setups side by side. Other prompts (sides, pellet id) have defaults; press Enter to accept.
 Change later with `cookienet config InSide=left`, then `reboot`.
 
+## Draconic reactor
+
+`cookienet get DE_Reactor --boot` on one advanced computer. Everything hangs off wired modems (right-click each
+one so it turns red); peripherals cannot go over wireless.
+
+- a modem on any stabilizer or the injector (one is enough, more is fine);
+- a modem on **every flux gate**: one gate feeding the injector, one or more draining the stabilizers.
+  The reactor parts cannot set any power flow themselves, the gates are the only controls;
+- no other flux or fluid gates on that modem network: every gate that is not the input is treated as an output;
+- optional advanced monitor, any size.
+
+`S` or the START button charges it, starts it at 2000 C and brings it to `TargetTemp`. `X` / STOP shuts it down.
+Which gate is the input is worked out on the first charge (it is the only one that can move power then) and kept
+in `/.de_reactor_in`. After a reboot the script carries on with whatever the reactor was doing.
+
+It shuts the reactor down by itself when the field drops under half of `TargetField`, the temperature passes
+9000, or `StopAt` % of the fuel is converted.
+
+Settings (`cookienet config TargetTemp=7500`, then reboot): `TargetTemp` 8000, `TargetField` 50, `StopAt` 90,
+`ChargeRate` 5000000, `InGate` auto, `TextScale` 1.
+
+**The injector's supply must not run dry.** With the field at 50% and the input gone, a full reactor has about
+two seconds. The server has `disableLargeReactorBoom=false`, so that is the big explosion. Feed the input gate from
+storage the reactor's own output refills, and keep the reactor and the computer in the same loaded chunks.
+At 8000 C a full core (8 awakened blocks) makes about 5.4M RF/t fresh, rising to roughly 24M as the fuel converts,
+and spends 1.6M to 2.4M of it on the field.
+
+`python tools/test_de_reactor.py` (needs `pip install lupa`) runs the script against a port of the reactor's tick.
+
 ## ME monitor
 
 `cookienet get ME_Monitor --boot` on every computer that has an advanced monitor; all of them need a modem.
