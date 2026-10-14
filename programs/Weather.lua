@@ -28,12 +28,14 @@ table.sort(relays, function(a, b) return order(a) < order(b) end)
 if #relays == 0 then error("no redstone relays: put one against each manipulator, a wired modem on each, right-click the modems", 0) end
 
 local actions, clear = {}, nil -- { name, relay }; index of the one called "clear" (the keep-clear action)
+local listed = 0 -- how many names the file has: fewer relays than that and every name sits one machine off
 -- name the relays from { "actions": [ ... ] }; false when the text is not that, true when a name changed
 local function name(json)
   local t = textutils.unserialiseJSON(json or "")
   local names = type(t) == "table" and type(t.actions) == "table" and t.actions
   if not names then return false end
-  local changed = false
+  local changed = #names ~= listed
+  listed = #names
   clear = nil
   for i, relay in ipairs(relays) do
     local n = tostring(names[i] or ("relay " .. i))
@@ -72,6 +74,12 @@ local function draw()
   term.setTextColour(colours.white)
   term.write((" WEATHER MACHINE" .. (" "):rep(W)):sub(1, W))
   term.setBackgroundColour(colours.black)
+  if #relays < listed then
+    -- the usual way to end up with rain on the "clear" key: one relay's modem is not connected
+    term.setCursorPos(1, 2)
+    term.setTextColour(colours.red)
+    term.write(("%d names, only %d relays on the network!"):format(listed, #relays):sub(1, W))
+  end
   for i, a in ipairs(actions) do
     if i + 2 >= H - 1 then break end
     term.setCursorPos(1, i + 2)
