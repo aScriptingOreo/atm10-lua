@@ -35,8 +35,8 @@ set(false) -- a reboot mid-pulse leaves lines high: no edge next time
 local function sky()
   if det.isThunder() then return "storm" end
   if det.isRaining() then return "rain" end
-  -- ponytail: day = ticks 0-12000 (sunrise to sunset), % in case getTime is the total world time
-  if det.getTime() % 24000 >= 12000 then return "night" end
+  -- canSleepHere = not level.isDay(): the bed rule, true only once it is properly dark (not at sunset)
+  if det.canSleepHere() then return "night" end
 end
 
 local enabled = not fs.exists(OFF_FILE)
@@ -47,7 +47,7 @@ local function draw()
   term.clear()
   term.setCursorPos(1, 1)
   print("DAYLIGHT KEEPER")
-  print("sky: " .. (now_sky or "clear day"))
+  print(("sky: %s (time %d)"):format(now_sky or "clear day", det.getTime() % 24000))
   print(("relays: %d"):format(#relays))
   print("last pulse: " .. last)
   print()
