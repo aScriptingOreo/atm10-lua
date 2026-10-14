@@ -35,7 +35,8 @@ set(false) -- a reboot mid-pulse leaves lines high: no edge next time
 local function sky()
   if det.isThunder() then return "storm" end
   if det.isRaining() then return "rain" end
-  if not det.isDay() then return "night" end
+  -- ponytail: day = ticks 0-12000 (sunrise to sunset), % in case getTime is the total world time
+  if det.getTime() % 24000 >= 12000 then return "night" end
 end
 
 local enabled = not fs.exists(OFF_FILE)
