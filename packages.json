@@ -94,6 +94,33 @@
     ],
     "main": "programs/DE_Reactor.lua"
   },
+  "Daylight": {
+    "desc": "Daylight sensor watch: pulses every redstone relay while it is night or raining, toggle over rednet",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "InSide",
+        "prompt": "Side the daylight sensor touches",
+        "default": "back"
+      },
+      {
+        "key": "DayAt",
+        "prompt": "Sensor signal counted as clear day (15 = clear noon, rain knocks ~3 off)",
+        "default": "13"
+      },
+      {
+        "key": "Cooldown",
+        "prompt": "Seconds between pulses while still dark (the manipulator takes a while)",
+        "default": "30"
+      }
+    ],
+    "files": [
+      "programs/Daylight.lua"
+    ],
+    "main": "programs/Daylight.lua"
+  },
   "ME_Monitor": {
     "desc": "Live ME dashboard on a monitor: storage, energy, cells, crafting CPUs, top items/fluids",
     "deps": [
