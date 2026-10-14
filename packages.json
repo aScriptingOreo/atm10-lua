@@ -95,24 +95,14 @@
     "main": "programs/DE_Reactor.lua"
   },
   "Daylight": {
-    "desc": "Daylight sensor watch: pulses every redstone relay while it is night or raining, toggle over rednet",
+    "desc": "Keeps it clear day: Environment Detector says night/rain/storm -> pulses every redstone relay, toggle in SKY tab",
     "deps": [
       "cn_lib"
     ],
     "config": [
       {
-        "key": "InSide",
-        "prompt": "Side the daylight sensor touches",
-        "default": "back"
-      },
-      {
-        "key": "DayAt",
-        "prompt": "Sensor signal counted as clear day (15 = clear noon, rain knocks ~3 off)",
-        "default": "13"
-      },
-      {
         "key": "Cooldown",
-        "prompt": "Seconds between pulses while still dark (the manipulator takes a while)",
+        "prompt": "Seconds between pulses while still not clear day (the manipulator takes a while)",
         "default": "30"
       }
     ],

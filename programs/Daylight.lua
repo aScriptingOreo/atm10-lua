@@ -1,21 +1,19 @@
--- Daylight keeper: a daylight sensor on one side of this computer, Redstone Relays on its wired network (one
--- against each celestial manipulator, e.g. set to "clear" and "noon"). While the sensor reads low (night, or
--- rain/storm dimming it) every relay is pulsed, again every Cooldown seconds until the sky is bright.
--- On/off: T key, or rednet { set = true/false } on protocol "daylight" (status broadcast there too).
--- @desc Daylight sensor watch: pulses every redstone relay while it is night or raining, toggle over rednet
+-- Daylight keeper: an Advanced Peripherals Environment Detector (touching this computer or on its wired
+-- network) says whether it is day and the sky is clear. While it is on and the answer is no, every Redstone
+-- Relay on the network is pulsed (one against each celestial manipulator, e.g. set to "clear" and "sunrise"),
+-- again every Cooldown seconds until it is clear day.
+-- On/off: T key, D in Butler's / Pocket's SKY tab, or rednet { set = true/false } on protocol "daylight".
+-- @desc Keeps it clear day: Environment Detector says night/rain/storm -> pulses every redstone relay, toggle in SKY tab
 -- @deps cn_lib
--- @config InSide|Side the daylight sensor touches|back
--- @config DayAt|Sensor signal counted as clear day (15 = clear noon, rain knocks ~3 off)|13
--- @config Cooldown|Seconds between pulses while still dark (the manipulator takes a while)|30
+-- @config Cooldown|Seconds between pulses while still not clear day (the manipulator takes a while)|30
 local cfg = dofile("/lib/cn.lua")
 local PROTO = "daylight"
-local IN_SIDE = cfg.InSide or "back"
--- ponytail: one threshold for "day and clear"; the sensor can't tell dawn from rain, tune DayAt in game
-local DAY_AT = tonumber(cfg.DayAt) or 13
 local COOLDOWN = tonumber(cfg.Cooldown) or 30
 local PULSE = 1 -- seconds the signal is held: the manipulator acts on the rising edge
 local OFF_FILE = "/.daylight_off" -- exists = turned off
 
+local det = peripheral.find("environment_detector")
+  or error("no Environment Detector: put one against this computer or on its wired network", 0)
 local relays = {}
 for _, name in ipairs(peripheral.getNames()) do
   if peripheral.hasType(name, "redstone_relay") then relays[#relays + 1] = name end
@@ -33,17 +31,22 @@ local function set(on)
 end
 set(false) -- a reboot mid-pulse leaves lines high: no edge next time
 
-local enabled = not fs.exists(OFF_FILE)
-local last = "nothing yet"
-local nextFire, offAt = 0, nil
+-- what is wrong with the sky, nil when it is clear day
+local function sky()
+  if det.isThunder() then return "storm" end
+  if det.isRaining() then return "rain" end
+  if not det.isDay() then return "night" end
+end
 
-local function signal() return redstone.getAnalogInput(IN_SIDE) end
+local enabled = not fs.exists(OFF_FILE)
+local now_sky, last = nil, "nothing yet"
+local nextFire, offAt = 0, nil
 
 local function draw()
   term.clear()
   term.setCursorPos(1, 1)
   print("DAYLIGHT KEEPER")
-  print(("sensor (%s): %d, day at %d+"):format(IN_SIDE, signal(), DAY_AT))
+  print("sky: " .. (now_sky or "clear day"))
   print(("relays: %d"):format(#relays))
   print("last pulse: " .. last)
   print()
@@ -51,7 +54,7 @@ local function draw()
 end
 
 local function tell()
-  if modem then rednet.broadcast({ on = enabled, signal = signal(), dayAt = DAY_AT, last = last }, PROTO) end
+  if modem then rednet.broadcast({ on = enabled, sky = now_sky or "clear day", last = last }, PROTO) end
 end
 
 local function setEnabled(on)
@@ -60,7 +63,7 @@ local function setEnabled(on)
   nextFire = 0
 end
 
--- No sleep(): it eats other events. One 1 s heartbeat does the pulse end, the check and the status broadcast.
+-- No sleep(): it eats other events. One 1 s heartbeat ends the pulse, checks the sky, broadcasts status.
 local beat = os.startTimer(0)
 while true do
   local e, a, b, c = os.pullEvent()
@@ -75,10 +78,11 @@ while true do
       set(false)
       offAt = nil
     end
-    if enabled and not offAt and now >= nextFire and signal() < DAY_AT then
+    now_sky = sky()
+    if enabled and now_sky and not offAt and now >= nextFire then
       set(true)
       offAt, nextFire = now + PULSE, now + COOLDOWN
-      last = ("signal %d at %s"):format(signal(), os.date("%H:%M:%S"))
+      last = now_sky .. " at " .. os.date("%H:%M:%S")
     end
   else
     e = nil -- not ours: no redraw, no broadcast

@@ -5,11 +5,12 @@
 -- its own computer and does not care whether anything is listening.
 -- @name de_view
 -- @desc reactor / energy core / weather screens for Butler, DE_Monitor and Pocket (auto-installed as a dependency)
-local V = { RPROTO = "de_reactor", CPROTO = "de_core", WPROTO = "weather", BPROTO = "butler", muted = false }
+local V = { RPROTO = "de_reactor", CPROTO = "de_core", WPROTO = "weather", BPROTO = "butler", DPROTO = "daylight", muted = false }
 
 local rx, rxAt     -- last reactor status, os.clock() when it came in
 local core, coreAt -- last energy core readout
 local sky, skyAt   -- last weather machine status: { actions = { names }, last, keep, canKeep }
+local dl, dlAt     -- last Daylight keeper status: { on, sky, last }
 -- V.butler / V.butlerAt: Butler's own summary, kept for whoever draws it (Pocket)
 local hist, chist = {}, {} -- { temp, field } / { level }, one every HIST_EVERY seconds, newest last
 local HIST_EVERY, KEEP = 6, 400
@@ -64,6 +65,9 @@ function V.feed(proto, msg)
     return true
   elseif proto == V.WPROTO and type(msg.actions) == "table" then
     sky, skyAt = msg, now
+    return true
+  elseif proto == V.DPROTO and msg.on ~= nil then
+    dl, dlAt = msg, now
     return true
   elseif proto == V.BPROTO then
     V.butler, V.butlerAt = msg, now
@@ -263,11 +267,17 @@ function V.core(win, x0, y0, W, H)
 end
 
 -- weather machine: its actions on rows 2.., what it did last, and whether it is still there
+-- and the Daylight keeper on the row above "last", when there is one
 function V.sky(win, x0, y0, W, H)
   local put = painter(win, x0, y0, W, H)
+  if dl then
+    local gone = os.clock() - dlAt > 15
+    put(1, H - 2, ("daylight keeper %s, sky: %s"):format(gone and "NO SIGNAL" or dl.on and "ON" or "off", tostring(dl.sky)),
+      gone and colours.red or dl.on and colours.lime or colours.lightGrey)
+  end
   if not sky then return put(1, 2, "waiting for the weather machine...", colours.lightGrey) end
   for i, name in ipairs(sky.actions) do
-    if i + 1 > H - 2 then break end
+    if i + 1 > H - (dl and 3 or 2) then break end
     put(1, i + 1, ("%2.0f "):format(i), colours.yellow)
     put(4, i + 1, tostring(name))
   end
@@ -276,10 +286,11 @@ function V.sky(win, x0, y0, W, H)
 end
 -- the keys V.skyKey understands, for a help line W characters wide
 function V.skyHelp(W)
-  if not sky then return "" end
+  local d = dl and (W < 40 and "  D day" or "   D daylight keeper") or ""
+  if not sky then return d end
   local keep = sky.keep and "ON" or "off"
-  if W < 40 then return "1-9 fire" .. (sky.canKeep and "  K clear: " .. keep or "") end
-  return "number or click fires" .. (sky.canKeep and "   K keep clear: " .. keep or "")
+  if W < 40 then return "1-9 fire" .. (sky.canKeep and "  K clear: " .. keep or "") .. d end
+  return "number or click fires" .. (sky.canKeep and "   K keep clear: " .. keep or "") .. d
 end
 -- fire action i (a click on region row r is action r - 1); returns what to tell the user, nil if there is none
 function V.skyFire(i)
@@ -287,9 +298,13 @@ function V.skyFire(i)
   rednet.broadcast({ fire = i }, V.WPROTO)
   return "sent: " .. tostring(sky.actions[i])
 end
--- a typed character: a number fires, K toggles keep-clear; returns what to tell the user
+-- a typed character: a number fires, K toggles keep-clear, D the Daylight keeper; returns what to tell the user
 function V.skyKey(s)
   if tonumber(s) then return V.skyFire(tonumber(s)) end
+  if s:lower() == "d" and dl then
+    rednet.broadcast({ set = not dl.on }, V.DPROTO)
+    return "sent: daylight keeper " .. (dl.on and "off" or "on")
+  end
   if s:lower() == "k" and sky and sky.canKeep then
     rednet.broadcast({ set = not sky.keep }, V.WPROTO)
     return "sent: keep clear " .. (sky.keep and "off" or "on")
