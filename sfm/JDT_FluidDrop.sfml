@@ -1,0 +1,56 @@
+NAME "JDT fluid drop"
+
+-- Just Dire Things fluid drop recipes (catalyst item dropped into fluid B -> fluid C),
+-- fed by an AE2 pattern provider. One craft at a time, exact amounts:
+-- 1 item + 1000 mB per cycle, so a pattern for N crafts just runs N cycles.
+--
+-- Labels:
+--   src       chest + tank next to the pattern provider (provider pushes into both; blocking mode ON)
+--   provider  the pattern provider (inserting into it returns the result to ME)
+--   placer    Fluid Placer, redstone mode Ignored
+--   dropper   Dropper, redstone mode Ignored
+--   collector Fluid Collector, redstone mode High
+--   idle, armed, gate   three empty chests; ONE token item (any item) starts in idle.
+--                        Comparator off gate -> collector, so it only runs while the token sits there.
+-- Placer, dropper and collector all face the same empty block.
+--
+-- SFM can't emit redstone, and an ungated collector grabs fluid B before the catalyst lands.
+-- The token remembers the phase; the IFs run gate -> armed -> idle so each step waits a full tick.
+
+EVERY 20 TICKS DO
+    -- 3. fluid C collected: send it home, back to idle
+    IF gate HAS GE 1 AND collector HAS GE 1000 fluid:: THEN
+        INPUT fluid:: FROM collector
+        OUTPUT fluid:: TO provider
+        FORGET
+        INPUT FROM gate
+        OUTPUT TO idle
+        FORGET
+    END
+
+    -- 2. fluid placed and catalyst dropped: let the collector loose
+    IF armed HAS GE 1 AND placer HAS EQ 0 fluid:: AND dropper HAS EQ 0 THEN
+        INPUT FROM armed
+        OUTPUT TO gate
+        FORGET
+    END
+
+    -- 1. a craft is waiting and the machines are clear: load exactly one
+    IF
+        idle HAS GE 1
+        AND src HAS GE 1000 fluid::
+        AND src HAS GE 1
+        AND placer HAS EQ 0 fluid::
+        AND dropper HAS EQ 0
+    THEN
+        INPUT 1000 fluid:: FROM src
+        OUTPUT fluid:: TO placer
+        FORGET
+        INPUT 1 FROM src
+        OUTPUT TO dropper
+        FORGET
+        INPUT FROM idle
+        OUTPUT TO armed
+        FORGET
+    END
+END
