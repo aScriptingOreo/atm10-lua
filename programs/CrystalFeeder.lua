@@ -8,9 +8,11 @@
 -- @deps cn_lib
 -- @config Barrel|Buffer barrel peripheral name (auto = the only barrel on the network)|auto
 -- @config Provider|Pattern provider that takes the processors (auto = the only one on the network)|auto
--- @config Cap|Most sets per assembler, reached only once every assembler has its share (8 = one 4-craft running + one queued)|8
+-- @config Cap|Most sets per assembler, a multiple of 4, reached only once every assembler has its share (8 = one batch running + one queued)|8
 local cfg = dofile("/lib/cn.lua")
-local CAP = tonumber(cfg.Cap) or 8
+local STEP = 4 -- the assembler only crafts 4 sets at a time: every level is a multiple of this
+local CAP = math.floor(tonumber(cfg.Cap) or 8)
+CAP = math.max(STEP, CAP - CAP % STEP)
 local BATCH = 64 -- peripheral calls in flight at once: CC drops events past 256 queued, stay well under
 
 local SILICON = "ae2:printed_silicon"
@@ -107,23 +109,21 @@ local function pick(stock, count)
 end
 
 -- Load balance first, saturate second: water-fill the assemblers on one recipe, lowest first, to the
--- highest common level `avail` sets can reach (at most CAP); the remainder goes +1 to some at that level.
--- hs = print count in each assembler; returns the target per assembler.
+-- highest common level `avail` sets can reach (a multiple of STEP, at most CAP); the remainder goes
+-- +STEP to some at that level. hs = print count in each assembler; returns the target per assembler.
 local function waterfill(hs, avail)
   local function need(l)
     local n = 0
     for _, h in ipairs(hs) do if h < l then n = n + l - h end end
     return n
   end
-  local lo, hi = 0, CAP
-  while lo < hi do
-    local mid = math.floor((lo + hi + 1) / 2)
-    if need(mid) <= avail then lo = mid else hi = mid - 1 end
-  end
+  local lo = 0
+  while lo < CAP and need(lo + STEP) <= avail do lo = lo + STEP end
   local spare, t = avail - need(lo), {}
   for i, h in ipairs(hs) do
     t[i] = math.max(h, lo)
-    if lo < CAP and t[i] == lo and spare > 0 then t[i], spare = lo + 1, spare - 1 end
+    local up = lo + STEP - t[i]
+    if lo < CAP and up > 0 and spare >= up then t[i], spare = lo + STEP, spare - up end
   end
   return t
 end
@@ -135,6 +135,7 @@ local function plan(a, p, have, stock, moves, share)
   local items = { p, SILICON, RECIPES[p] }
   local level = share
   for _, it in ipairs(items) do level = math.min(level, (have[it] or 0) + avail(stock, it)) end
+  level = level - level % STEP -- a partial batch never crafts: hold it back for the next round
   for _, it in ipairs(items) do take(stock, it, level - (have[it] or 0), a, moves) end
 end
 

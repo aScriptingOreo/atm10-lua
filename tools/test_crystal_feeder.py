@@ -4,7 +4,7 @@
 
 Assemblers: 9 insert-only input slots + slot 10 output; each round every one crafts up to 4 of whatever
 whole set it holds. Checks after every round: no assembler holds two prints, no print is ahead of its
-silicon or third ingredient, nothing over Cap; the first fill gives every assembler work, within 1 set of the others on its recipe. At the end every print is crafted and nothing is left over.
+silicon or third ingredient, nothing over Cap; the first fill gives every assembler work, within one batch of 4 of the others on its recipe; every print count is a whole batch of 4. At the end every print is crafted and nothing is left over.
 """
 import pathlib
 import lupa
@@ -28,11 +28,14 @@ P.barrel = inv("sophisticatedstorage:barrel", 27)
 P.provider = inv("ae2:pattern_provider", 0)
 for i = 1, N_ASM do P["asm_" .. i] = inv("extendedae:crystal_assembler", 10) end
 -- the barrel holds item stacks over 64 per slot (netherite upgrades); split some across slots on purpose
-local seed = { { "ae2:printed_logic_processor", 300 }, { "ae2:printed_calculation_processor", 97 },
-  { "megacells:printed_accumulation_processor", 53 }, { SIL, 200 }, { SIL, 250 },
-  { REDSTONE, 397 }, { FLUIX, 53 } }
+-- jobs come in whole batches of 4; asm_1 starts stuck at 3/3/3 (left there by an older feeder)
+local seed = { { "ae2:printed_logic_processor", 297 }, { "ae2:printed_calculation_processor", 96 },
+  { "megacells:printed_accumulation_processor", 52 }, { SIL, 200 }, { SIL, 245 },
+  { REDSTONE, 393 }, { FLUIX, 52 } }
 for i, s in ipairs(seed) do P.barrel.slots[i] = { name = s[1], count = s[2] } end
-local total_prints = 300 + 97 + 53
+P.asm_1.slots = { { name = "ae2:printed_logic_processor", count = 3 }, { name = SIL, count = 3 },
+  { name = REDSTONE, count = 3 } }
+local total_prints = 300 + 96 + 52
 
 local function insert(dst, name, n)  -- into input slots 1..9, 64 per stack
   local moved = 0
@@ -98,6 +101,7 @@ local function check()
       for item, n in pairs(c) do
         assert(n <= CAP, name .. " over cap: " .. item .. " " .. n)
         if RECIPE[item] then
+          assert(n % 4 == 0, name .. " holds " .. n .. " " .. item .. ", not a whole batch of 4")
           assert(not print_, name .. " holds two prints: " .. tostring(print_) .. ", " .. item)
           print_ = item
           assert(n <= (c[SIL] or 0) and n <= (c[RECIPE[item][1]] or 0), name .. " print ahead of its partners")
@@ -107,11 +111,11 @@ local function check()
   end
 end
 
-local function craft(a)  -- up to 4 crafts of the one recipe it holds
+local function craft(a)  -- exactly 4 crafts of the one recipe it holds, or nothing
   local c = counts(a)
   for p, r in pairs(RECIPE) do
-    local n = math.min(4, c[p] or 0, c[SIL] or 0, c[r[1]] or 0)
-    if n > 0 then
+    local n = 4
+    if math.min(c[p] or 0, c[SIL] or 0, c[r[1]] or 0) >= n then
       for _, item in ipairs({ p, SIL, r[1] }) do
         local left = n
         for slot = 1, 9 do
@@ -142,7 +146,7 @@ sleep = function()
         end
       end
     end
-    for p in pairs(lo) do assert(hi[p] - lo[p] <= 1, p .. " unbalanced: " .. lo[p] .. ".." .. hi[p]) end
+    for p in pairs(lo) do assert(hi[p] - lo[p] <= 4, p .. " unbalanced: " .. lo[p] .. ".." .. hi[p]) end
   end
   rounds = rounds + 1
   for _, a in pairs(P) do if a.type:find("crystal_assembler") then craft(a) end end

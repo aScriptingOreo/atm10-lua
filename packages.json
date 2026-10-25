@@ -45,7 +45,7 @@
       },
       {
         "key": "Cap",
-        "prompt": "Most sets per assembler, reached only once every assembler has its share (8 = one 4-craft running + one queued)",
+        "prompt": "Most sets per assembler, a multiple of 4, reached only once every assembler has its share (8 = one batch running + one queued)",
         "default": "8"
       }
     ],
