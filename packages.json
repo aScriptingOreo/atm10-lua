@@ -47,6 +47,11 @@
         "key": "Cap",
         "prompt": "Most sets per assembler, a multiple of 4, reached only once every assembler has its share (8 = one batch running + one queued)",
         "default": "8"
+      },
+      {
+        "key": "Unstick",
+        "prompt": "Seconds an assembler may sit on an incomplete batch before the ME bridge completes it (0 = off)",
+        "default": "30"
       }
     ],
     "files": [

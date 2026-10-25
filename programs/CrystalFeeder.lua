@@ -4,12 +4,16 @@
 -- Each assembler is filled to its own level from its own contents, so the ratio holds per machine, and
 -- different assemblers can run different recipes at once. Replaces sfm/CrystalAssembler.sfml (pull that disk).
 -- Network: wired modems (right-click, red) on the barrel, the pattern provider and every assembler.
+-- Optional ME bridge on the network: an assembler stuck with an incomplete batch (stray items, a short set,
+-- two prints) for Unstick seconds gets the cheapest set of missing items from ME so it can craft out.
 -- @desc Crystal assemblers: load-balances whole sets over every assembler, then fills to Cap; processors -> provider
 -- @deps cn_lib
 -- @config Barrel|Buffer barrel peripheral name (auto = the only barrel on the network)|auto
 -- @config Provider|Pattern provider that takes the processors (auto = the only one on the network)|auto
 -- @config Cap|Most sets per assembler, a multiple of 4, reached only once every assembler has its share (8 = one batch running + one queued)|8
+-- @config Unstick|Seconds an assembler may sit on an incomplete batch before the ME bridge completes it (0 = off)|30
 local cfg = dofile("/lib/cn.lua")
+local UNSTICK = tonumber(cfg.Unstick) or 30
 local STEP = 4 -- the assembler only crafts 4 sets at a time: every level is a multiple of this
 local CAP = math.floor(tonumber(cfg.Cap) or 8)
 CAP = math.max(STEP, CAP - CAP % STEP)
@@ -51,6 +55,8 @@ end
 
 local barrel = one("barrel", cfg.Barrel)
 local provider = one("pattern_provider", cfg.Provider)
+local bridge = names("me_bridge")[1] -- optional: only used to unstick assemblers
+local stuckSince = {} -- assembler -> os.clock() it was first seen unable to craft
 
 local function run(jobs)
   for i = 1, #jobs, BATCH do parallel.waitForAll(table.unpack(jobs, i, math.min(i + BATCH - 1, #jobs))) end
@@ -139,6 +145,43 @@ local function plan(a, p, have, stock, moves, share)
   for _, it in ipairs(items) do take(stock, it, level - (have[it] or 0), a, moves) end
 end
 
+local function canCraft(have)
+  for p, x in pairs(RECIPES) do
+    if math.min(have[p] or 0, have[SILICON] or 0, have[x] or 0) >= STEP then return true end
+  end
+  return false
+end
+
+-- What a stuck assembler is missing to craft everything it holds, in whole batches. Prints already in it
+-- fix the recipes; with none, every recipe is tried, sized to use up the strays. Cheapest that ME can
+-- cover wins. Returns item -> count, or nil and the item ME is short of.
+local function complete(have, meHas)
+  local present, options = {}, {}
+  for p in pairs(RECIPES) do if (have[p] or 0) > 0 then present[#present + 1] = p end end
+  if #present > 0 then options[1] = present
+  else for p in pairs(RECIPES) do options[#options + 1] = { p } end end
+  local best, bestCost, short
+  for _, R in ipairs(options) do
+    local want = {}
+    for _, p in ipairs(R) do
+      local x = RECIPES[p]
+      local t = (have[p] or 0) > 0 and have[p] or math.max(have[SILICON] or 0, have[x] or 0, 1)
+      t = math.ceil(t / STEP) * STEP
+      for _, it in ipairs({ p, SILICON, x }) do want[it] = (want[it] or 0) + t end
+    end
+    local need, cost, ok = {}, 0, true
+    for item, w in pairs(want) do
+      local n = w - (have[item] or 0)
+      if n > 0 then
+        need[item], cost = n, cost + n
+        if meHas(item) < n then ok, short = false, item end
+      end
+    end
+    if ok and (not best or cost < bestCost) then best, bestCost = need, cost end
+  end
+  return best, not best and short or nil
+end
+
 local function round()
   local asms = names("crystal_assembler")
   local inv, stock = {}, {}
@@ -152,7 +195,7 @@ local function round()
   run(jobs)
 
   -- who runs what: busy assemblers keep their print, empty ones are spread over the recipes
-  local moves, pulls, mixed, fed = {}, {}, 0, 0
+  local moves, pulls, mixed, fed, fedSet = {}, {}, 0, 0, {}
   local haves, recipe, count = {}, {}, {}
   for i, a in ipairs(asms) do
     local have = {}
@@ -183,23 +226,64 @@ local function round()
     for k, target in ipairs(waterfill(hs, sets(stock, p))) do
       local i, before = idx[k], #moves
       plan(asms[i], p, haves[i], stock, moves, target)
-      if #moves > before then fed = fed + 1 end
+      if #moves > before then fed, fedSet[i] = fed + 1, true end
+    end
+  end
+
+  -- stuck: holds something, can't craft a batch, and the barrel sent it nothing this round
+  local stuck, exports, short = 0, {}, nil
+  local now, me = os.clock(), {} -- me: item -> ME count, looked up once per round
+  local function meHas(item)
+    if me[item] == nil then
+      local ok, info = pcall(peripheral.call, bridge, "getItem", { name = item })
+      me[item] = ok and type(info) == "table" and (info.count or 0) or 0
+    end
+    return me[item]
+  end
+  for i, a in ipairs(asms) do
+    if fedSet[i] or not next(haves[i]) or canCraft(haves[i]) then
+      stuckSince[a] = nil
+    else
+      stuckSince[a] = stuckSince[a] or now
+      stuck = stuck + 1
+      if bridge and UNSTICK > 0 and now - stuckSince[a] >= UNSTICK then
+        local need, missing = complete(haves[i], meHas)
+        if need then
+          for item, n in pairs(need) do
+            exports[#exports + 1] = { a, item, n }
+            me[item] = me[item] - n
+          end
+          stuckSince[a] = nil
+        else
+          short = missing
+        end
+      end
     end
   end
 
   jobs = {}
   for _, m in ipairs(pulls) do jobs[#jobs + 1] = function() pcall(peripheral.call, provider, "pullItems", m[1], m[2]) end end
   for _, m in ipairs(moves) do jobs[#jobs + 1] = function() pcall(peripheral.call, barrel, "pushItems", m[1], m[2], m[3]) end end
+  -- AP 0.8: exportItem(target, filter), target = peripheral name on the network
+  for _, m in ipairs(exports) do
+    jobs[#jobs + 1] = function() pcall(peripheral.call, bridge, "exportItem", m[1], { name = m[2], count = m[3] }) end
+  end
   run(jobs)
-  return #asms, fed, #pulls, mixed
+  return #asms, fed, #pulls, mixed, stuck, #exports, short
 end
 
 while true do
-  local n, fed, pulled, mixed = round()
+  local n, fed, pulled, mixed, stuck, exported, short = round()
   term.clear()
   term.setCursorPos(1, 1)
   print(("crystal assemblers: %d"):format(n))
   print(("fed %d, emptied %d outputs"):format(fed, pulled))
-  if mixed > 0 then print(("%d hold mixed prints: break and replace them"):format(mixed)) end
+  if mixed > 0 then print(("%d hold more than one print"):format(mixed)) end
+  if stuck > 0 then
+    print(("%d can't craft a batch%s"):format(stuck,
+      not bridge and ": no ME bridge to unstick them" or UNSTICK <= 0 and " (Unstick off)" or ""))
+  end
+  if exported > 0 then print(("unstick: %d exports from ME"):format(exported)) end
+  if short then print("unstick: ME is out of " .. short) end
   sleep(0)
 end

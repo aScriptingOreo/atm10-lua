@@ -4,7 +4,8 @@
 
 Assemblers: 9 insert-only input slots + slot 10 output; each round every one crafts up to 4 of whatever
 whole set it holds. Checks after every round: no assembler holds two prints, no print is ahead of its
-silicon or third ingredient, nothing over Cap; the first fill gives every assembler work, within one batch of 4 of the others on its recipe; every print count is a whole batch of 4. At the end every print is crafted and nothing is left over.
+silicon or third ingredient, nothing over Cap; the first fill gives every assembler work, within one batch of 4 of the others on its recipe; every print count is a whole batch of 4. Legacy assemblers (two prints, strays with no print) must be unstuck through the simulated ME bridge.
+At the end every print, the barrel's and the ME bridge's, is crafted and every assembler is empty.
 """
 import pathlib
 import lupa
@@ -35,7 +36,16 @@ local seed = { { "ae2:printed_logic_processor", 297 }, { "ae2:printed_calculatio
 for i, s in ipairs(seed) do P.barrel.slots[i] = { name = s[1], count = s[2] } end
 P.asm_1.slots = { { name = "ae2:printed_logic_processor", count = 3 }, { name = SIL, count = 3 },
   { name = REDSTONE, count = 3 } }
-local total_prints = 300 + 96 + 52
+-- left over from the SFM days, need the ME bridge: two prints and a short set; strays and no print
+P.asm_9.slots = { { name = "ae2:printed_logic_processor", count = 2 }, { name = "ae2:printed_calculation_processor", count = 1 },
+  { name = SIL, count = 2 }, { name = REDSTONE, count = 1 } }
+P.asm_10.slots = { { name = SIL, count = 5 }, { name = FLUIX, count = 2 } }
+local LEGACY = { asm_9 = true, asm_10 = true } -- exempt from the invariants until they have emptied once
+local total_prints = 300 + 96 + 52 + 3
+local me, me_prints, clock = {}, 0, 0
+for _, it in ipairs({ SIL, REDSTONE, FLUIX }) do me[it] = 10000 end
+for p in pairs(RECIPE) do me[p] = 10000 end
+P.bridge = inv("advancedperipherals:me_bridge", 0)
 
 local function insert(dst, name, n)  -- into input slots 1..9, 64 per stack
   local moved = 0
@@ -66,6 +76,13 @@ local methods = {
     if s.count == 0 then self.slots[from] = nil end
     return k
   end,
+  getItem = function(self, f) return { name = f.name, count = me[f.name] or 0 } end,
+  exportItem = function(self, target, f)  -- AP 0.8 argument order
+    local k = insert(P[target], f.name, math.min(f.count, me[f.name] or 0))
+    me[f.name] = me[f.name] - k
+    if RECIPE[f.name] then me_prints = me_prints + k end
+    return k
+  end,
   pullItems = function(self, from, slot)
     local src = P[from]
     assert(slot == 10, "pulled from an insert-only input slot " .. slot)
@@ -86,7 +103,8 @@ peripheral = {
 parallel = { waitForAll = function(...) for _, f in ipairs({ ... }) do f() end end }
 term = { clear = function() end, setCursorPos = function() end }
 print = function() end
-dofile = function() return { Cap = tostring(CAP) } end
+dofile = function() return { Cap = tostring(CAP), Unstick = "3" } end
+os = { clock = function() return clock end }
 
 local function counts(a)
   local c = {}
@@ -96,7 +114,8 @@ end
 
 local function check()
   for name, a in pairs(P) do
-    if a.type:find("crystal_assembler") then
+    if LEGACY[name] and not next(counts(a)) then LEGACY[name] = nil end
+    if a.type:find("crystal_assembler") and not LEGACY[name] then
       local c, print_ = counts(a), nil
       for item, n in pairs(c) do
         assert(n <= CAP, name .. " over cap: " .. item .. " " .. n)
@@ -138,7 +157,7 @@ sleep = function()
   if rounds == 0 then  -- load balance before saturating: every assembler gets work, even per recipe
     local lo, hi = {}, {}
     for name, a in pairs(P) do
-      if a.type:find("crystal_assembler") then
+      if a.type:find("crystal_assembler") and not LEGACY[name] then
         local c = counts(a)
         assert(next(c), name .. " left empty on the first fill")
         for p in pairs(RECIPE) do
@@ -148,20 +167,20 @@ sleep = function()
     end
     for p in pairs(lo) do assert(hi[p] - lo[p] <= 4, p .. " unbalanced: " .. lo[p] .. ".." .. hi[p]) end
   end
-  rounds = rounds + 1
+  rounds, clock = rounds + 1, clock + 1
   for _, a in pairs(P) do if a.type:find("crystal_assembler") then craft(a) end end
   if rounds >= ROUNDS then error("done", 0) end
 end
 
-function result()
+function result()  -- prints anywhere, or anything at all in an assembler, counts as left over
   local left = {}
-  for _, s in pairs(P.barrel.slots) do left[#left + 1] = s.name .. " x" .. s.count end
+  for _, s in pairs(P.barrel.slots) do if RECIPE[s.name] then left[#left + 1] = s.name .. " x" .. s.count end end
   for name, a in pairs(P) do
     if a.type:find("crystal_assembler") then
       for slot, s in pairs(a.slots) do left[#left + 1] = name .. "[" .. slot .. "] " .. s.name .. " x" .. s.count end
     end
   end
-  return products, total_prints, table.concat(left, ", ")
+  return products, total_prints + me_prints, table.concat(left, ", ")
 end
 """
 
