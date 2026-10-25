@@ -58,12 +58,35 @@ peripheral = {
   isPresent = function(n) return P[n] ~= nil end,
   call = function(n, m, ...) return methods[m](P[n], ...) end,
 }
-parallel = { waitForAll = function(...) for _, f in ipairs({ ... }) do f() end end }
+-- coroutine scheduler like CC's: sleep yields; once every loop has yielded, one game tick passes
+local depth = 0
+local function sched(any, ...)
+  local cos = {}
+  for i, f in ipairs({ ... }) do cos[i] = coroutine.create(f) end
+  depth = depth + 1
+  local top = depth == 1
+  while true do
+    local alive = 0
+    for _, co in ipairs(cos) do
+      if coroutine.status(co) ~= "dead" then
+        local ok, err = coroutine.resume(co)
+        if not ok then error(err, 0) end
+        if coroutine.status(co) == "dead" then
+          if any then depth = depth - 1 return end
+        else alive = alive + 1 end
+      end
+    end
+    if alive == 0 then depth = depth - 1 return end
+    if top then tick() end
+  end
+end
+parallel = { waitForAll = function(...) return sched(false, ...) end, waitForAny = function(...) return sched(true, ...) end }
 term = { clear = function() end, setCursorPos = function() end }
 print = function() end
 dofile = function() return { Cap = tostring(CAP) } end
 
-sleep = function()
+sleep = function() coroutine.yield() end
+function tick()
   local lo, hi = {}, {}
   for name, m in pairs(P) do
     if m.type:find("circuit_cutter") then

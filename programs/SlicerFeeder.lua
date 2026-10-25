@@ -56,88 +56,105 @@ local function waterfill(hs, avail)
   return t
 end
 
-local function round()
-  local machines = names(KIND)
-  if #machines == 0 then error("no " .. KIND .. " on the network: set Kind with cookienet config", 0) end
-  local inv, blist, plist, psize = {}, {}, {}, 0
-  local jobs = {
-    function() local ok, l = pcall(peripheral.call, barrel, "list") blist = ok and l or {} end,
-    function() local ok, l = pcall(peripheral.call, provider, "list") plist = ok and l or {} end,
-    function() local ok, s = pcall(peripheral.call, provider, "size") psize = ok and s or 9 end,
-  }
-  for i, m in ipairs(machines) do
-    jobs[#jobs + 1] = function() local ok, l = pcall(peripheral.call, m, "list") inv[i] = ok and l or {} end
-  end
-  run(jobs)
+local OUT = 2 -- slicer output slot
+local machines = names(KIND) -- refreshed by the feed loop, read by the pull loop
+local pulled, fed, rounds = 0, 0, 0
 
-  local stock = {} -- item -> { n = total, slots = { {slot, count}, ... } }
-  for slot, it in pairs(blist) do
-    local s = stock[it.name] or { n = 0, slots = {} }
-    s.n, s.slots[#s.slots + 1] = s.n + it.count, { slot, it.count }
-    stock[it.name] = s
-  end
-
-  -- who slices what: busy slicers keep their item, empty ones go to the item with the most stock per slicer
-  local item, h, count, pulls = {}, {}, {}, {}
-  for i, m in ipairs(machines) do
-    for slot, it in pairs(inv[i]) do
-      if slot == 1 then item[i], h[i] = it.name, it.count else pulls[#pulls + 1] = { m, slot, it.count } end
-    end
-    if item[i] then count[item[i]] = (count[item[i]] or 0) + 1 end
-  end
-  for i in ipairs(machines) do
-    if not item[i] then
-      local best, most = nil, 0
-      for name, s in pairs(stock) do
-        local per = s.n / ((count[name] or 0) + 1)
-        if per > most or (per == most and best and name < best) then best, most = name, per end
+-- Its own loop, not a step of the feed round: a long feed (hundreds of pushes while the barrel is full)
+-- meant outputs got pulled once a round, slicers stalled on full outputs, and only caught up once the
+-- barrel ran dry. The provider has only a few return slots that AE empties on its own tick, so each pass
+-- pulls from as many slicers as it has free slots (more failed silently), rotating through all of them.
+local function pullLoop()
+  local nxt = 1
+  while true do
+    local plist, psize = {}, 9
+    run({
+      function() local ok, l = pcall(peripheral.call, provider, "list") plist = ok and l or {} end,
+      function() local ok, n = pcall(peripheral.call, provider, "size") psize = ok and n or 9 end,
+    })
+    local free, n, jobs = psize, #machines, {}
+    for _ in pairs(plist) do free = free - 1 end
+    for k = 1, math.min(math.max(free, 0), n) do
+      local m = machines[(nxt + k - 2) % n + 1]
+      jobs[k] = function()
+        local ok, got = pcall(peripheral.call, provider, "pullItems", m, OUT)
+        if ok and got then pulled = pulled + got end
       end
-      if best then item[i], h[i], count[best] = best, 0, (count[best] or 0) + 1 end
     end
+    if n > 0 then nxt = (nxt + #jobs - 1) % n + 1 end
+    run(jobs)
+    sleep(0)
   end
+end
 
-  local moves, fed = {}, 0
-  for name, s in pairs(stock) do
-    local idx, hs = {}, {}
-    for i in ipairs(machines) do
-      if item[i] == name then idx[#idx + 1], hs[#hs + 1] = i, h[i] end
+local function feedLoop()
+  while true do
+    machines = names(KIND)
+    if #machines == 0 then error("no " .. KIND .. " on the network: set Kind with cookienet config", 0) end
+    local inv, blist = {}, {}
+    local jobs = { function() local ok, l = pcall(peripheral.call, barrel, "list") blist = ok and l or {} end }
+    for i, m in ipairs(machines) do
+      jobs[#jobs + 1] = function() local ok, l = pcall(peripheral.call, m, "list") inv[i] = ok and l or {} end
     end
-    for k, target in ipairs(waterfill(hs, s.n)) do
-      local n = target - hs[k]
-      if n > 0 then fed = fed + 1 end
-      for _, sl in ipairs(s.slots) do
-        if n <= 0 then break end
-        local take = math.min(n, sl[2])
-        if take > 0 then
-          moves[#moves + 1] = { machines[idx[k]], sl[1], take }
-          sl[2], n = sl[2] - take, n - take
+    run(jobs)
+
+    local stock = {} -- item -> { n = total, slots = { {slot, count}, ... } }
+    for slot, it in pairs(blist) do
+      local s = stock[it.name] or { n = 0, slots = {} }
+      s.n, s.slots[#s.slots + 1] = s.n + it.count, { slot, it.count }
+      stock[it.name] = s
+    end
+
+    -- who slices what: busy slicers keep their item, empty ones go to the item with the most stock per slicer
+    local item, h, count = {}, {}, {}
+    for i in ipairs(machines) do
+      local s = inv[i][1]
+      if s then item[i], h[i], count[s.name] = s.name, s.count, (count[s.name] or 0) + 1 end
+    end
+    for i in ipairs(machines) do
+      if not item[i] then
+        local best, most = nil, 0
+        for name, s in pairs(stock) do
+          local per = s.n / ((count[name] or 0) + 1)
+          if per > most or (per == most and best and name < best) then best, most = name, per end
+        end
+        if best then item[i], h[i], count[best] = best, 0, (count[best] or 0) + 1 end
+      end
+    end
+
+    local moves, n_fed = {}, 0
+    for name, s in pairs(stock) do
+      local idx, hs = {}, {}
+      for i in ipairs(machines) do
+        if item[i] == name then idx[#idx + 1], hs[#hs + 1] = i, h[i] end
+      end
+      for k, target in ipairs(waterfill(hs, s.n)) do
+        local n = target - hs[k]
+        if n > 0 then n_fed = n_fed + 1 end
+        for _, sl in ipairs(s.slots) do
+          if n <= 0 then break end
+          local take = math.min(n, sl[2])
+          if take > 0 then
+            moves[#moves + 1] = { machines[idx[k]], sl[1], take }
+            sl[2], n = sl[2] - take, n - take
+          end
         end
       end
     end
-  end
 
-  -- The provider only has a few return slots and AE empties them on its own tick: pulling every output at
-  -- once overflowed it and the pulls past that failed silently, leaving slicers stuck on a full output.
-  -- Pull only as many as it has free slots, fullest first, so the slicers closest to stalling go first.
-  local free = psize
-  for _ in pairs(plist) do free = free - 1 end
-  table.sort(pulls, function(a, b) return a[3] > b[3] end)
-  for k = #pulls, math.max(free, 0) + 1, -1 do pulls[k] = nil end
-
-  jobs = {}
-  for _, m in ipairs(pulls) do jobs[#jobs + 1] = function() pcall(peripheral.call, provider, "pullItems", m[1], m[2]) end end
-  for _, m in ipairs(moves) do
-    jobs[#jobs + 1] = function() pcall(peripheral.call, barrel, "pushItems", m[1], m[2], m[3], 1) end
+    jobs = {}
+    for _, m in ipairs(moves) do
+      jobs[#jobs + 1] = function() pcall(peripheral.call, barrel, "pushItems", m[1], m[2], m[3], 1) end
+    end
+    run(jobs)
+    fed, rounds = n_fed, rounds + 1
+    term.clear()
+    term.setCursorPos(1, 1)
+    print(("circuit slicers: %d"):format(#machines))
+    print(("feed round %d: fed %d slicers"):format(rounds, fed))
+    print(("pulled %d prints so far"):format(pulled))
+    sleep(0)
   end
-  run(jobs)
-  return #machines, fed, #pulls
 end
 
-while true do
-  local n, fed, pulled = round()
-  term.clear()
-  term.setCursorPos(1, 1)
-  print(("circuit slicers: %d"):format(n))
-  print(("fed %d, emptied %d outputs"):format(fed, pulled))
-  sleep(0)
-end
+parallel.waitForAny(pullLoop, feedLoop)
