@@ -4,7 +4,7 @@
 
 Assemblers: 9 insert-only input slots + slot 10 output; each round every one crafts up to 4 of whatever
 whole set it holds. Checks after every round: no assembler holds two prints, no print is ahead of its
-silicon or third ingredient, nothing over Cap. At the end every print is crafted and nothing is left over.
+silicon or third ingredient, nothing over Cap; the first fill gives every assembler work, within 1 set of the others on its recipe. At the end every print is crafted and nothing is left over.
 """
 import pathlib
 import lupa
@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = (ROOT / "programs" / "CrystalFeeder.lua").read_text(encoding="utf-8")
 
 SIM = r"""
-local CAP, N_ASM, ROUNDS = 8, 10, 400
+local CAP, N_ASM, ROUNDS = __CAP__, 10, 400
 local REDSTONE, FLUIX, SIL = "minecraft:redstone", "ae2:fluix_dust", "ae2:printed_silicon"
 local RECIPE = {
   ["ae2:printed_logic_processor"] = { REDSTONE, "ae2:logic_processor" },
@@ -131,6 +131,19 @@ end
 
 sleep = function()
   check()
+  if rounds == 0 then  -- load balance before saturating: every assembler gets work, even per recipe
+    local lo, hi = {}, {}
+    for name, a in pairs(P) do
+      if a.type:find("crystal_assembler") then
+        local c = counts(a)
+        assert(next(c), name .. " left empty on the first fill")
+        for p in pairs(RECIPE) do
+          if c[p] then lo[p], hi[p] = math.min(lo[p] or c[p], c[p]), math.max(hi[p] or 0, c[p]) end
+        end
+      end
+    end
+    for p in pairs(lo) do assert(hi[p] - lo[p] <= 1, p .. " unbalanced: " .. lo[p] .. ".." .. hi[p]) end
+  end
   rounds = rounds + 1
   for _, a in pairs(P) do if a.type:find("crystal_assembler") then craft(a) end end
   if rounds >= ROUNDS then error("done", 0) end
@@ -148,14 +161,15 @@ function result()
 end
 """
 
-lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-lua.execute(SIM)
-try:
-    lua.execute(SCRIPT)
-except lupa.LuaError as e:
-    if "done" not in str(e):
-        raise
-products, total, left = lua.globals().result()
-assert products == total, f"crafted {products} of {total} processors; left: {left}"
-assert not left, f"left over: {left}"
-print(f"ok: {products} processors crafted, nothing stranded, no assembler ever mixed or over cap")
+for cap in (8, 64):
+    lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(SIM.replace("__CAP__", str(cap)))
+    try:
+        lua.execute(SCRIPT)
+    except lupa.LuaError as e:
+        if "done" not in str(e):
+            raise
+    products, total, left = lua.globals().result()
+    assert products == total, f"Cap {cap}: crafted {products} of {total} processors; left: {left}"
+    assert not left, f"Cap {cap}: left over: {left}"
+    print(f"Cap {cap} ok: {products} crafted, spread over every assembler, never mixed, ahead or over cap")

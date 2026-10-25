@@ -4,11 +4,11 @@
 -- Each assembler is filled to its own level from its own contents, so the ratio holds per machine, and
 -- different assemblers can run different recipes at once. Replaces sfm/CrystalAssembler.sfml (pull that disk).
 -- Network: wired modems (right-click, red) on the barrel, the pattern provider and every assembler.
--- @desc Crystal assemblers: tops each one up to Cap whole sets from the buffer barrel, processors -> provider
+-- @desc Crystal assemblers: load-balances whole sets over every assembler, then fills to Cap; processors -> provider
 -- @deps cn_lib
 -- @config Barrel|Buffer barrel peripheral name (auto = the only barrel on the network)|auto
 -- @config Provider|Pattern provider that takes the processors (auto = the only one on the network)|auto
--- @config Cap|Sets kept in each assembler (it crafts 4 at a time: 8 = one running + one queued)|8
+-- @config Cap|Most sets per assembler, reached only once every assembler has its share (8 = one 4-craft running + one queued)|8
 local cfg = dofile("/lib/cn.lua")
 local CAP = tonumber(cfg.Cap) or 8
 local BATCH = 64 -- peripheral calls in flight at once: CC drops events past 256 queued, stay well under
@@ -93,22 +93,47 @@ local function active(have)
   return p
 end
 
--- for an empty assembler: the recipe with the most whole sets in the barrel
-local function pick(stock)
+local function sets(stock, p) return math.min(avail(stock, p), avail(stock, SILICON), avail(stock, RECIPES[p])) end
+
+-- for an empty assembler: the recipe with the most barrel sets per assembler already on it, so machines
+-- spread over recipes in proportion to their stock
+local function pick(stock, count)
   local best, most = nil, 0
-  for p, x in pairs(RECIPES) do
-    local sets = math.min(avail(stock, p), avail(stock, SILICON), avail(stock, x))
-    if sets > most or (sets == most and best and p < best) then best, most = p, sets end
+  for p in pairs(RECIPES) do
+    local per = sets(stock, p) / ((count[p] or 0) + 1)
+    if per > most or (per == most and best and p < best) then best, most = p, per end
   end
   return best
 end
 
--- Every ingredient goes to the same level (at most CAP), the highest the barrel can cover for all three.
--- The print never ends up ahead of its partners, so nothing is ever stranded; spare silicon or redstone
--- already in the machine just means less is sent.
-local function plan(a, p, have, stock, moves)
+-- Load balance first, saturate second: water-fill the assemblers on one recipe, lowest first, to the
+-- highest common level `avail` sets can reach (at most CAP); the remainder goes +1 to some at that level.
+-- hs = print count in each assembler; returns the target per assembler.
+local function waterfill(hs, avail)
+  local function need(l)
+    local n = 0
+    for _, h in ipairs(hs) do if h < l then n = n + l - h end end
+    return n
+  end
+  local lo, hi = 0, CAP
+  while lo < hi do
+    local mid = math.floor((lo + hi + 1) / 2)
+    if need(mid) <= avail then lo = mid else hi = mid - 1 end
+  end
+  local spare, t = avail - need(lo), {}
+  for i, h in ipairs(hs) do
+    t[i] = math.max(h, lo)
+    if lo < CAP and t[i] == lo and spare > 0 then t[i], spare = lo + 1, spare - 1 end
+  end
+  return t
+end
+
+-- Every ingredient goes to the same level, the highest the barrel can cover for all three, capped at the
+-- assembler's water-fill target. The print never ends up ahead of its partners, so nothing is ever stranded; spare
+-- silicon or redstone already in the machine just means less is sent.
+local function plan(a, p, have, stock, moves, share)
   local items = { p, SILICON, RECIPES[p] }
-  local level = CAP
+  local level = share
   for _, it in ipairs(items) do level = math.min(level, (have[it] or 0) + avail(stock, it)) end
   for _, it in ipairs(items) do take(stock, it, level - (have[it] or 0), a, moves) end
 end
@@ -125,20 +150,38 @@ local function round()
   end
   run(jobs)
 
+  -- who runs what: busy assemblers keep their print, empty ones are spread over the recipes
   local moves, pulls, mixed, fed = {}, {}, 0, 0
+  local haves, recipe, count = {}, {}, {}
   for i, a in ipairs(asms) do
     local have = {}
     for slot, it in pairs(inv[i] or {}) do
       if PRODUCTS[it.name] then pulls[#pulls + 1] = { a, slot }
       else have[it.name] = (have[it.name] or 0) + it.count end
     end
-    local p = active(have)
-    if p == false then
-      mixed = mixed + 1
-    else
-      p = p or pick(stock)
-      local before = #moves
-      if p then plan(a, p, have, stock, moves) end
+    haves[i], recipe[i] = have, active(have)
+    local p = recipe[i]
+    if p == false then mixed = mixed + 1
+    elseif p then count[p] = (count[p] or 0) + 1 end
+  end
+  for i in ipairs(asms) do
+    if recipe[i] == nil then
+      local p = pick(stock, count)
+      if p then recipe[i], count[p] = p, (count[p] or 0) + 1 end
+    end
+  end
+  -- one recipe at a time against the live stock, so silicon a recipe takes isn't counted again for the next
+  local order = {}
+  for p in pairs(count) do order[#order + 1] = p end
+  table.sort(order)
+  for _, p in ipairs(order) do
+    local idx, hs = {}, {}
+    for i in ipairs(asms) do
+      if recipe[i] == p then idx[#idx + 1], hs[#hs + 1] = i, haves[i][p] or 0 end
+    end
+    for k, target in ipairs(waterfill(hs, sets(stock, p))) do
+      local i, before = idx[k], #moves
+      plan(asms[i], p, haves[i], stock, moves, target)
       if #moves > before then fed = fed + 1 end
     end
   end

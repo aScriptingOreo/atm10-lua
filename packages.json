@@ -28,7 +28,7 @@
     "main": "programs/Butler.lua"
   },
   "CrystalFeeder": {
-    "desc": "Crystal assemblers: tops each one up to Cap whole sets from the buffer barrel, processors -> provider",
+    "desc": "Crystal assemblers: load-balances whole sets over every assembler, then fills to Cap; processors -> provider",
     "deps": [
       "cn_lib"
     ],
@@ -45,7 +45,7 @@
       },
       {
         "key": "Cap",
-        "prompt": "Sets kept in each assembler (it crafts 4 at a time: 8 = one running + one queued)",
+        "prompt": "Most sets per assembler, reached only once every assembler has its share (8 = one 4-craft running + one queued)",
         "default": "8"
       }
     ],
