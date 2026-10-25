@@ -59,8 +59,12 @@ end
 local function round()
   local machines = names(KIND)
   if #machines == 0 then error("no " .. KIND .. " on the network: set Kind with cookienet config", 0) end
-  local inv, blist = {}, {}
-  local jobs = { function() local ok, l = pcall(peripheral.call, barrel, "list") blist = ok and l or {} end }
+  local inv, blist, plist, psize = {}, {}, {}, 0
+  local jobs = {
+    function() local ok, l = pcall(peripheral.call, barrel, "list") blist = ok and l or {} end,
+    function() local ok, l = pcall(peripheral.call, provider, "list") plist = ok and l or {} end,
+    function() local ok, s = pcall(peripheral.call, provider, "size") psize = ok and s or 9 end,
+  }
   for i, m in ipairs(machines) do
     jobs[#jobs + 1] = function() local ok, l = pcall(peripheral.call, m, "list") inv[i] = ok and l or {} end
   end
@@ -77,7 +81,7 @@ local function round()
   local item, h, count, pulls = {}, {}, {}, {}
   for i, m in ipairs(machines) do
     for slot, it in pairs(inv[i]) do
-      if slot == 1 then item[i], h[i] = it.name, it.count else pulls[#pulls + 1] = { m, slot } end
+      if slot == 1 then item[i], h[i] = it.name, it.count else pulls[#pulls + 1] = { m, slot, it.count } end
     end
     if item[i] then count[item[i]] = (count[item[i]] or 0) + 1 end
   end
@@ -111,6 +115,14 @@ local function round()
       end
     end
   end
+
+  -- The provider only has a few return slots and AE empties them on its own tick: pulling every output at
+  -- once overflowed it and the pulls past that failed silently, leaving slicers stuck on a full output.
+  -- Pull only as many as it has free slots, fullest first, so the slicers closest to stalling go first.
+  local free = psize
+  for _ in pairs(plist) do free = free - 1 end
+  table.sort(pulls, function(a, b) return a[3] > b[3] end)
+  for k = #pulls, math.max(free, 0) + 1, -1 do pulls[k] = nil end
 
   jobs = {}
   for _, m in ipairs(pulls) do jobs[#jobs + 1] = function() pcall(peripheral.call, provider, "pullItems", m[1], m[2]) end end

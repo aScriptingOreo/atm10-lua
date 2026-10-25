@@ -4,7 +4,8 @@
 
 Slicers: slot 1 insert-only input, slot 2 output; each round every one slices up to 2. Checks: the first
 fill gives every slicer work and keeps each item within 1 across its slicers, nothing ever goes over Cap,
-and at the end every input is sliced and every print reached the provider.
+no pull lands on a full provider (9 return slots), and at the end every input is sliced and every print
+reached the provider.
 """
 import pathlib
 import lupa
@@ -12,16 +13,17 @@ import lupa
 SCRIPT = (pathlib.Path(__file__).resolve().parent.parent / "programs" / "SlicerFeeder.lua").read_text(encoding="utf-8")
 
 SIM = r"""
-local CAP, ROUNDS = 32, 200
+local CAP, ROUNDS = 32, 600
 local P, products, rounds = {}, 0, 0
+overfull = 0 -- pulls that hit a full provider (pcall in the script hides them, so count instead)
 local function inv(t) return { type = t, slots = {} } end
 P.barrel = inv("sophisticatedstorage:barrel")
 P.provider = inv("ae2:pattern_provider")
-for i = 1, 6 do P["slicer_" .. i] = inv("extendedae:circuit_cutter") end
+for i = 1, 12 do P["slicer_" .. i] = inv("extendedae:circuit_cutter") end
 P.slicer_1.slots[1] = { name = "gold_block", count = 5 } -- already busy when the feeder starts
-P.barrel.slots = { { name = "gold_block", count = 30 }, { name = "silicon_block", count = 7 },
-  { name = "gold_block", count = 20 }, { name = "diamond_block", count = 3 } }
-local total = 5 + 30 + 7 + 20 + 3
+P.barrel.slots = { { name = "gold_block", count = 300 }, { name = "silicon_block", count = 70 },
+  { name = "gold_block", count = 200 }, { name = "diamond_block", count = 3 } }
+local total = 5 + 300 + 70 + 200 + 3
 
 local methods = {
   list = function(self)
@@ -39,12 +41,14 @@ local methods = {
     if s.count == 0 then self.slots[from] = nil end
     return k
   end,
-  pullItems = function(self, from, slot)
+  size = function(self) return 9 end,
+  pullItems = function(self, from, slot)  -- into the provider's 9 return slots, one stack per slot
     assert(slot ~= 1, "pulled from the insert-only input slot")
     local s = P[from].slots[slot]
     if not s then return 0 end
+    if #self.slots >= 9 then overfull = overfull + 1 return 0 end -- fails silently in game, as here
     P[from].slots[slot] = nil
-    products = products + s.count
+    self.slots[#self.slots + 1] = { name = s.name, count = s.count }
     return s.count
   end,
 }
@@ -75,6 +79,8 @@ sleep = function()
     for item in pairs(lo) do assert(hi[item] - lo[item] <= 1, item .. " unbalanced: " .. lo[item] .. ".." .. hi[item]) end
   end
   rounds = rounds + 1
+  for _, s in ipairs(P.provider.slots) do products = products + s.count end  -- AE empties it on its tick
+  P.provider.slots = {}
   for _, m in pairs(P) do
     local s = m.type:find("circuit_cutter") and m.slots[1]
     if s then
@@ -102,5 +108,6 @@ except lupa.LuaError as e:
     if "done" not in str(e):
         raise
 products, total, left = lua.globals().result()
+assert lua.globals().overfull == 0, f"{lua.globals().overfull} pulls hit a full provider"
 assert products == total and left == 0, f"sliced {products} of {total}, {left} left over"
 print(f"ok: {products} sliced, every slicer busy from the first fill, balanced, never over cap")
