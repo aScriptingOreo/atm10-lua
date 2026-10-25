@@ -27,6 +27,33 @@
     ],
     "main": "programs/Butler.lua"
   },
+  "CrystalFeeder": {
+    "desc": "Crystal assemblers: tops each one up to Cap whole sets from the buffer barrel, processors -> provider",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "Barrel",
+        "prompt": "Buffer barrel peripheral name (auto = the only barrel on the network)",
+        "default": "auto"
+      },
+      {
+        "key": "Provider",
+        "prompt": "Pattern provider that takes the processors (auto = the only one on the network)",
+        "default": "auto"
+      },
+      {
+        "key": "Cap",
+        "prompt": "Sets kept in each assembler (it crafts 4 at a time: 8 = one running + one queued)",
+        "default": "8"
+      }
+    ],
+    "files": [
+      "programs/CrystalFeeder.lua"
+    ],
+    "main": "programs/CrystalFeeder.lua"
+  },
   "DE_Core": {
     "desc": "Draconic energy core readout: stored energy and flow, broadcast for Butler's REACTOR tab",
     "files": [
