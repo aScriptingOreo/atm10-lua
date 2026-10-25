@@ -230,6 +230,38 @@
     ],
     "main": "programs/RS_Trash.lua"
   },
+  "SlicerFeeder": {
+    "desc": "Circuit slicers: load-balances the buffer barrel over every slicer, then fills to Cap; prints -> provider",
+    "deps": [
+      "cn_lib"
+    ],
+    "config": [
+      {
+        "key": "Barrel",
+        "prompt": "Buffer barrel peripheral name (auto = the only barrel on the network)",
+        "default": "auto"
+      },
+      {
+        "key": "Provider",
+        "prompt": "Pattern provider that takes the prints (auto = the only one on the network)",
+        "default": "auto"
+      },
+      {
+        "key": "Kind",
+        "prompt": "Peripheral type of the slicers (matched as part of the name)",
+        "default": "circuit_cutter"
+      },
+      {
+        "key": "Cap",
+        "prompt": "Most items per slicer, reached only once every slicer has its share",
+        "default": "32"
+      }
+    ],
+    "files": [
+      "programs/SlicerFeeder.lua"
+    ],
+    "main": "programs/SlicerFeeder.lua"
+  },
   "Weather": {
     "desc": "Weather machine: fires DE celestial manipulators through redstone relays, local keys + Butler's SKY tab",
     "files": [
